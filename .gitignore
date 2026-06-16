@@ -1,0 +1,8 @@
+config/db.php
+*.log
+.DS_Store
+Thumbs.db
+backups/
+uploads/
+graphify-out/
+_deploy_infinityfree/

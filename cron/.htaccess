@@ -1,0 +1,10 @@
+# Carpeta cron: bloquear acceso web
+# Estos scripts solo deben ejecutarse desde CLI (Task Scheduler / cron)
+
+Require all denied
+Options -Indexes
+
+<FilesMatch ".*">
+    Order deny,allow
+    Deny from all
+</FilesMatch>
