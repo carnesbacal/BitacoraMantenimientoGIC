@@ -46,7 +46,10 @@ function _subir_foto_lectura(array $file): ?string {
     }
     // Protege la carpeta contra ejecución de scripts
     $htaccess = __DIR__ . '/uploads/.htaccess';
-    if (!file_exists($htaccess)) @file_put_contents($htaccess, "php_flag engine off\nOptions -ExecCGI\n");
+    if (!file_exists($htaccess)) {
+        $htaccess_content = "<FilesMatch \"\.(php|phtml|phar|cgi|pl|py|sh|shtml)$\">\n    Require all denied\n</FilesMatch>\nOptions -ExecCGI -Indexes\nRemoveHandler .php .phtml .phar\nRemoveType .php .phtml .phar\n";
+        @file_put_contents($htaccess, $htaccess_content);
+    }
 
     $nombre = bin2hex(random_bytes(8)) . '.' . $ext_map[$mime];
     $destino = $abs_dir . '/' . $nombre;

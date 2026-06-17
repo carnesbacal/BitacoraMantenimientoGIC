@@ -790,6 +790,16 @@ function busquedaGlobal() {
                 <span x-show="sidebarAbierto" x-transition.opacity>Bóveda</span>
             </a>
 
+            <div class="px-3 mt-6 mb-2" x-show="sidebarAbierto" x-transition.opacity>
+                <div class="text-[10px] uppercase tracking-wider font-bold text-zinc-400 px-3">Flotilla</div>
+            </div>
+
+            <a href="<?= url('flotilla_vehiculos.php') ?>"
+               class="nav-item <?= str_starts_with($pagina_activa ?? '', 'flotilla_') ? 'nav-item-active' : 'text-zinc-700' ?> flex items-center gap-3 px-4 py-2.5 text-sm font-medium">
+                <i data-lucide="car" class="w-5 h-5 flex-shrink-0 text-zinc-500"></i>
+                <span x-show="sidebarAbierto" x-transition.opacity>Flotilla</span>
+            </a>
+
             <?php if (tiene_permiso('ver_reportes')): ?>
             <div class="px-3 mt-6 mb-2" x-show="sidebarAbierto" x-transition.opacity>
                 <div class="text-[10px] uppercase tracking-wider font-bold text-zinc-400 px-3">Análisis</div>
@@ -877,6 +887,12 @@ function busquedaGlobal() {
                class="nav-item <?= $pagina_activa === 'admin_importar' ? 'nav-item-active' : 'text-zinc-700' ?> flex items-center gap-3 px-4 py-2.5 text-sm font-medium">
                 <i data-lucide="upload-cloud" class="w-5 h-5 flex-shrink-0 text-zinc-500"></i>
                 <span x-show="sidebarAbierto" x-transition.opacity>Importar</span>
+            </a>
+
+            <a href="<?= url('admin/notificaciones_config.php') ?>"
+               class="nav-item <?= $pagina_activa === 'admin_notificaciones_config' ? 'nav-item-active' : 'text-zinc-700' ?> flex items-center gap-3 px-4 py-2.5 text-sm font-medium">
+                <i data-lucide="bell-ring" class="w-5 h-5 flex-shrink-0 text-zinc-500"></i>
+                <span x-show="sidebarAbierto" x-transition.opacity>Notificaciones</span>
             </a>
 
             <a href="<?= url('admin/anuncios.php') ?>"

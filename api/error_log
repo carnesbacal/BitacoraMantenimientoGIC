@@ -266,3 +266,15 @@ Stack trace:
 #1 /home/granodeo/mantenimiento.granodeoro.com.mx/api/sparklines_dashboard.php(68): db_one('SELECT COUNT(*)...', Array)
 #2 {main}
   thrown in /home/granodeo/mantenimiento.granodeoro.com.mx/config/db.php on line 92
+[17-Jun-2026 10:11:51 America/Tijuana] PHP Fatal error:  Uncaught PDOException: SQLSTATE[HY093]: Invalid parameter number in /home/granodeo/mantenimiento.granodeoro.com.mx/config/app.php:54
+Stack trace:
+#0 /home/granodeo/mantenimiento.granodeoro.com.mx/config/app.php(54): PDOStatement->execute(Array)
+#1 /home/granodeo/mantenimiento.granodeoro.com.mx/api/sparklines_dashboard.php(68): db_one('SELECT COUNT(*)...', Array)
+#2 {main}
+  thrown in /home/granodeo/mantenimiento.granodeoro.com.mx/config/app.php on line 54
+[17-Jun-2026 10:52:37 America/Tijuana] PHP Fatal error:  Uncaught PDOException: SQLSTATE[HY093]: Invalid parameter number in /home/granodeo/mantenimiento.granodeoro.com.mx/config/app.php:54
+Stack trace:
+#0 /home/granodeo/mantenimiento.granodeoro.com.mx/config/app.php(54): PDOStatement->execute(Array)
+#1 /home/granodeo/mantenimiento.granodeoro.com.mx/api/sparklines_dashboard.php(68): db_one('SELECT COUNT(*)...', Array)
+#2 {main}
+  thrown in /home/granodeo/mantenimiento.granodeoro.com.mx/config/app.php on line 54

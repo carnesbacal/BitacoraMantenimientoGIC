@@ -1,0 +1,12 @@
+[16-Jun-2026 19:58:57 UTC] PHP Warning:  require_once(/home/granodeo/mantenimiento.granodeoro.com.mx/config/app.php): Failed to open stream: No such file or directory in /home/granodeo/mantenimiento.granodeoro.com.mx/config/db.php on line 12
+[16-Jun-2026 19:58:57 UTC] PHP Fatal error:  Uncaught Error: Failed opening required '/home/granodeo/mantenimiento.granodeoro.com.mx/config/app.php' (include_path='.:/opt/cpanel/ea-php82/root/usr/share/pear') in /home/granodeo/mantenimiento.granodeoro.com.mx/config/db.php:12
+Stack trace:
+#0 /home/granodeo/mantenimiento.granodeoro.com.mx/login.php(7): require_once()
+#1 {main}
+  thrown in /home/granodeo/mantenimiento.granodeoro.com.mx/config/db.php on line 12
+[16-Jun-2026 19:59:02 UTC] PHP Warning:  require_once(/home/granodeo/mantenimiento.granodeoro.com.mx/config/app.php): Failed to open stream: No such file or directory in /home/granodeo/mantenimiento.granodeoro.com.mx/config/db.php on line 12
+[16-Jun-2026 19:59:02 UTC] PHP Fatal error:  Uncaught Error: Failed opening required '/home/granodeo/mantenimiento.granodeoro.com.mx/config/app.php' (include_path='.:/opt/cpanel/ea-php82/root/usr/share/pear') in /home/granodeo/mantenimiento.granodeoro.com.mx/config/db.php:12
+Stack trace:
+#0 /home/granodeo/mantenimiento.granodeoro.com.mx/login.php(7): require_once()
+#1 {main}
+  thrown in /home/granodeo/mantenimiento.granodeoro.com.mx/config/db.php on line 12

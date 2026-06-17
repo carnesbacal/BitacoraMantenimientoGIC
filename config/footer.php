@@ -3,11 +3,7 @@
     </div>
 </div>
 
-<!-- ============================================================
-     Componente global: Hover previews para folios y códigos de equipo
-     ============================================================ -->
-<div x-data="hoverPreviews()" x-init="init()"
-     class="contents">
+<!-- hover previews desactivados --><div class="contents" style="display:none">
 
     <!-- Tooltip flotante (se reutiliza para folios y equipos) -->
     <div x-show="visible" x-cloak
@@ -112,10 +108,8 @@
 </div>
 
 <script>
-// ============================================================================
-// HOVER PREVIEWS - Tooltip al hacer hover sobre folios o códigos de equipo
-// ============================================================================
-function hoverPreviews() {
+function hoverPreviews() { return {}; } // desactivado
+/* function hoverPreviews() {
     return {
         visible: false,
         tipo: '',
@@ -259,7 +253,7 @@ function hoverPreviews() {
             }
         },
     }
-}
+} */
 </script>
 
 <script>

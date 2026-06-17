@@ -328,6 +328,92 @@ if ($sin_actualizar > 0) {
         'enlace' => url('bitacora.php?sin_actualizar=1')];
 }
 
+// ── Alertas de Flotilla ───────────────────────────────────────────────────────
+$flot_suc_join  = $sucursal_filtro ? " AND v.sucursal_id = :fsid " : "";
+$flot_suc_param = $sucursal_filtro ? ['fsid' => $sucursal_filtro] : [];
+
+try {
+    // Documentos vencidos
+    $flot_docs_vencidos = (int) db_one(
+        "SELECT COUNT(*) c FROM flotilla_documentos d
+         LEFT JOIN flotilla_vehiculos v ON v.id = d.vehiculo_id $flot_suc_join
+         WHERE d.estado = 'vencido'",
+        $flot_suc_param
+    )['c'];
+    if ($flot_docs_vencidos > 0) {
+        $alertas[] = ['tipo' => 'critica', 'icono' => 'file-x',
+            'titulo' => "$flot_docs_vencidos documento(s) de flotilla vencido(s)",
+            'mensaje' => 'Tarjeta de circulación, seguro u otros documentos han vencido.',
+            'enlace' => url('flotilla_documentos.php?estado=vencido')];
+    }
+
+    // Documentos por vencer (próximos 15 días)
+    $flot_docs_pv = (int) db_one(
+        "SELECT COUNT(*) c FROM flotilla_documentos d
+         LEFT JOIN flotilla_vehiculos v ON v.id = d.vehiculo_id $flot_suc_join
+         WHERE d.estado = 'por_vencer'
+           AND (d.fecha_vence IS NULL OR d.fecha_vence <= DATE_ADD(CURDATE(), INTERVAL 15 DAY))",
+        $flot_suc_param
+    )['c'];
+    if ($flot_docs_pv > 0) {
+        $alertas[] = ['tipo' => 'warning', 'icono' => 'file-clock',
+            'titulo' => "$flot_docs_pv documento(s) de flotilla por vencer",
+            'mensaje' => 'Vencen en los próximos 15 días.',
+            'enlace' => url('flotilla_documentos.php?estado=por_vencer')];
+    }
+
+    // Multas sin pagar
+    $flot_multas = db_one(
+        "SELECT COUNT(*) c, COALESCE(SUM(m.monto_original),0) tot
+         FROM flotilla_multas m
+         INNER JOIN flotilla_vehiculos v ON v.id = m.vehiculo_id $flot_suc_join
+         WHERE m.estado = 'pendiente'",
+        $flot_suc_param
+    );
+    if ((int)($flot_multas['c'] ?? 0) > 0) {
+        $alertas[] = ['tipo' => 'warning', 'icono' => 'ticket-x',
+            'titulo' => "{$flot_multas['c']} multa(s) de flotilla sin pagar · \$" . number_format($flot_multas['tot'], 2),
+            'mensaje' => 'Existen infracciones pendientes de liquidación.',
+            'enlace' => url('flotilla_multas.php')];
+    }
+
+    // Mantenimientos vencidos (km_actual >= proximo_km del último historial)
+    $flot_mant_venc = (int) db_one(
+        "SELECT COUNT(DISTINCT h.vehiculo_id) c
+         FROM flotilla_mant_historial h
+         INNER JOIN flotilla_vehiculos v ON v.id = h.vehiculo_id $flot_suc_join
+         INNER JOIN (
+             SELECT vehiculo_id, nombre, MAX(id) last_id
+             FROM flotilla_mant_historial
+             GROUP BY vehiculo_id, nombre
+         ) ul ON ul.last_id = h.id
+         WHERE h.proximo_km IS NOT NULL AND v.km_actual >= h.proximo_km",
+        $flot_suc_param
+    )['c'];
+    if ($flot_mant_venc > 0) {
+        $alertas[] = ['tipo' => 'warning', 'icono' => 'wrench',
+            'titulo' => "$flot_mant_venc vehículo(s) con mantenimiento vencido",
+            'mensaje' => 'Superaron el kilometraje programado para servicio.',
+            'enlace' => url('flotilla_mantenimiento.php?vista=pendientes')];
+    }
+
+    // Siniestros sin cerrar
+    $flot_siniestros = (int) db_one(
+        "SELECT COUNT(*) c FROM flotilla_siniestros s
+         INNER JOIN flotilla_vehiculos v ON v.id = s.vehiculo_id $flot_suc_join
+         WHERE s.estado != 'cerrado'",
+        $flot_suc_param
+    )['c'];
+    if ($flot_siniestros > 0) {
+        $alertas[] = ['tipo' => 'critica', 'icono' => 'shield-alert',
+            'titulo' => "$flot_siniestros siniestro(s) de flotilla abierto(s)",
+            'mensaje' => 'Hay siniestros pendientes de resolución.',
+            'enlace' => url('flotilla_siniestros.php')];
+    }
+} catch (Throwable $flot_ex) {
+    // Si las tablas de flotilla no existen aún, ignorar silenciosamente
+}
+
 $h = (int) date('G');
 $saludo = $h < 12 ? 'Buenos días' : ($h < 19 ? 'Buenas tardes' : 'Buenas noches');
 $meses_es = ['Enero','Febrero','Marzo','Abril','Mayo','Junio','Julio','Agosto','Septiembre','Octubre','Noviembre','Diciembre'];
