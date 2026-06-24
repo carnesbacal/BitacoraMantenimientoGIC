@@ -1,164 +1,274 @@
 <?php
 /**
- * flotilla_reportes_export.php - Exporta reporte de flotilla a Excel (6 hojas)
+ * ============================================================================
+ * flotilla_reportes_export.php - Exportar reporte de flotilla a Excel (.xlsx)
+ * ============================================================================
  */
 require_once __DIR__ . '/config/db.php';
 require_once __DIR__ . '/config/auth.php';
 require_once __DIR__ . '/config/helpers.php';
+require_once __DIR__ . '/config/flotilla_helpers.php';
 require_once __DIR__ . '/config/xlsx_writer.php';
+
 requerir_login();
-
 $u = usuario_actual();
-$ver_todas = tiene_permiso('ver_todas_sucursales');
-$sucursal_filtro = $ver_todas ? (int) input('sucursal', 0) : (int) $u['sucursal_id'];
 
-$desde = (string) input('desde', date('Y-m-01'));
-$hasta = (string) input('hasta', date('Y-m-d'));
+$hoy   = date('Y-m-d');
+$desde = trim((string) input('desde', date('Y-01-01')));
+$hasta = trim((string) input('hasta', $hoy));
+$f_suc = (int) input('sucursal_id', 0);
 
-$suc_join  = $sucursal_filtro ? " AND v.sucursal_id=:sid " : "";
-$suc_param = $sucursal_filtro ? ['sid' => $sucursal_filtro] : [];
-$p_rango   = array_merge($suc_param, ['desde' => $desde, 'hasta' => $hasta]);
+if (!preg_match('/^\d{4}-\d{2}-\d{2}$/', $desde)) $desde = date('Y-01-01');
+if (!preg_match('/^\d{4}-\d{2}-\d{2}$/', $hasta))  $hasta = $hoy;
+if ($desde > $hasta) [$desde, $hasta] = [$hasta, $desde];
 
-// ── Datos ─────────────────────────────────────────────────────────────────────
+if (!tiene_permiso('ver_todas_sucursales')) {
+    $f_suc = (int) $u['sucursal_id'];
+}
 
-// KPIs generales
-$gasto_total = (float) db_one("SELECT COALESCE(SUM(g.monto),0) t FROM flotilla_gastos g INNER JOIN flotilla_vehiculos v ON v.id=g.vehiculo_id $suc_join WHERE g.fecha BETWEEN :desde AND :hasta", $p_rango)['t'];
-$litros      = (float) db_one("SELECT COALESCE(SUM(litros),0) t FROM flotilla_combustible c INNER JOIN flotilla_vehiculos v ON v.id=c.vehiculo_id $suc_join WHERE DATE(c.fecha) BETWEEN :desde AND :hasta", $p_rango)['t'];
-$servicios   = (int)   db_one("SELECT COUNT(*) t FROM flotilla_mant_historial h INNER JOIN flotilla_vehiculos v ON v.id=h.vehiculo_id $suc_join WHERE h.fecha BETWEEN :desde AND :hasta", $p_rango)['t'];
-$vehiculos_act = (int) db_one("SELECT COUNT(*) t FROM flotilla_vehiculos v WHERE v.activo=1 $suc_join AND v.estado='activo'", $suc_param)['t'];
+$suf = $f_suc ? " AND v.sucursal_id = {$f_suc}" : '';
+
+// ── Datos ────────────────────────────────────────────────────────────────────
+
+// 1. Gastos detallados
+$gastos = db_all(
+    "SELECT g.fecha, v.placas, COALESCE(v.alias,'') alias, v.marca, v.modelo,
+            cat.nombre categoria, g.concepto, g.monto, COALESCE(g.proveedor,'') proveedor,
+            COALESCE(g.numero_factura,'') factura, COALESCE(g.km_odometro,0) km
+     FROM flotilla_gastos g
+     INNER JOIN flotilla_vehiculos v         ON g.vehiculo_id = v.id
+     INNER JOIN flotilla_categorias_gasto cat ON g.categoria_id = cat.id
+     WHERE g.fecha BETWEEN :desde AND :hasta $suf
+     ORDER BY g.fecha DESC, v.placas",
+    ['desde' => $desde, 'hasta' => $hasta]
+);
+
+// 2. Resumen por vehículo
+$por_vehiculo = db_all(
+    "SELECT v.placas, COALESCE(v.alias,'') alias, CONCAT(v.marca,' ',v.modelo) modelo, v.km_actual,
+            COALESCE(SUM(g.monto),0) gasto_total,
+            COALESCE(SUM(CASE WHEN cat.nombre LIKE '%Combustible%' THEN g.monto END),0) combustible,
+            COALESCE(SUM(CASE WHEN cat.nombre LIKE '%Mantenimiento%' OR cat.nombre LIKE '%Refacc%' THEN g.monto END),0) mantenimiento,
+            COALESCE(SUM(CASE WHEN cat.nombre LIKE '%Multa%' THEN g.monto END),0) multas,
+            COUNT(DISTINCT g.id) registros
+     FROM flotilla_vehiculos v
+     LEFT JOIN flotilla_gastos g               ON g.vehiculo_id = v.id AND g.fecha BETWEEN :desde AND :hasta
+     LEFT JOIN flotilla_categorias_gasto cat   ON g.categoria_id = cat.id
+     WHERE v.activo = 1 $suf
+     GROUP BY v.id
+     HAVING gasto_total > 0
+     ORDER BY gasto_total DESC",
+    ['desde' => $desde, 'hasta' => $hasta]
+);
+
+// 3. Combustible detallado
+$combustible = db_all(
+    "SELECT DATE(c.fecha) fecha, v.placas, COALESCE(v.alias,'') alias,
+            c.litros, c.precio_litro, ROUND(c.litros * c.precio_litro,2) total,
+            c.tipo_combustible, COALESCE(c.estacion,'') estacion,
+            c.km_odometro, COALESCE(c.km_recorridos,0) km_recorridos,
+            COALESCE(c.rendimiento_kml,0) kml,
+            COALESCE(co.nombre_completo,'') conductor
+     FROM flotilla_combustible c
+     INNER JOIN flotilla_vehiculos v      ON c.vehiculo_id = v.id
+     LEFT  JOIN flotilla_conductores co   ON c.conductor_id = co.id
+     WHERE DATE(c.fecha) BETWEEN :desde AND :hasta $suf
+     ORDER BY c.fecha DESC",
+    ['desde' => $desde, 'hasta' => $hasta]
+);
+
+// 4. Mantenimientos
+$mantenimientos = db_all(
+    "SELECT h.fecha, v.placas, COALESCE(v.alias,'') alias,
+            h.nombre servicio, COALESCE(h.taller,'') taller,
+            COALESCE(h.tecnico,'') tecnico, COALESCE(h.costo,0) costo,
+            h.km_odometro, COALESCE(h.numero_orden,'') orden,
+            COALESCE(h.proxima_fecha,'') proxima_fecha,
+            COALESCE(h.proximo_km,0) proximo_km
+     FROM flotilla_mant_historial h
+     INNER JOIN flotilla_vehiculos v ON h.vehiculo_id = v.id
+     WHERE h.fecha BETWEEN :desde AND :hasta $suf
+     ORDER BY h.fecha DESC",
+    ['desde' => $desde, 'hasta' => $hasta]
+);
+
+// 5. Documentos
+$documentos = db_all(
+    "SELECT t.nombre tipo, COALESCE(v.placas,'') placas, COALESCE(v.alias,'') alias,
+            COALESCE(co.nombre_completo,'') conductor,
+            COALESCE(d.numero_documento,'') numero, COALESCE(d.proveedor,'') proveedor,
+            COALESCE(d.fecha_inicio,'') inicio, COALESCE(d.fecha_vence,'') vence,
+            d.estado, COALESCE(d.monto,0) monto
+     FROM flotilla_documentos d
+     INNER JOIN flotilla_tipos_documento t ON d.tipo_id = t.id
+     LEFT  JOIN flotilla_vehiculos v        ON d.vehiculo_id = v.id
+     LEFT  JOIN flotilla_conductores co     ON d.conductor_id = co.id
+     ORDER BY FIELD(d.estado,'vencido','por_vencer','vigente','cancelado'), d.fecha_vence"
+);
+
+// ── Construir XLSX ───────────────────────────────────────────────────────────
+
+$xlsx = new XlsxWriter();
+
+$periodo_label = "Período: {$desde} al {$hasta}";
+$gen_label     = "Generado: " . date('d/m/Y H:i') . " por {$u['nombre']}";
+
+// ── Hoja 1: Resumen ─────────────────────────────────────────────────────────
+$xlsx->addSheet('Resumen');
+$xlsx->addHeaderRow(['REPORTE DE FLOTILLA VEHICULAR'], 5);
+$xlsx->addRow([$periodo_label]);
+$xlsx->addRow([$gen_label]);
+$xlsx->addBlankRow();
+
+$total_gastos = array_sum(array_column($gastos, 'monto'));
+$total_litros = array_sum(array_column($combustible, 'litros'));
+$total_comb   = array_sum(array_column($combustible, 'total'));
+$total_mant   = array_sum(array_column($mantenimientos, 'costo'));
+
+$xlsx->addHeaderRow(['Indicador', 'Valor'], 1);
+$xlsx->addRow(['Total registros de gasto',          count($gastos)]);
+$xlsx->addRow(['Gasto total del período',           $total_gastos]);
+$xlsx->addRow(['Gasto en combustible',              $total_comb]);
+$xlsx->addRow(['Gasto en mantenimiento',            $total_mant]);
+$xlsx->addRow(['Litros de combustible cargados',    round($total_litros, 2)]);
+$xlsx->addRow(['Cargas de combustible registradas', count($combustible)]);
+$xlsx->addRow(['Servicios de mantenimiento',        count($mantenimientos)]);
+$xlsx->addRow(['Vehículos con actividad',           count($por_vehiculo)]);
+$xlsx->addBlankRow();
 
 // Resumen por categoría
-$por_cat = db_all(
-    "SELECT cat.nombre categoria, COUNT(*) registros, SUM(g.monto) total
-     FROM flotilla_gastos g
-     INNER JOIN flotilla_vehiculos v ON v.id=g.vehiculo_id $suc_join
-     INNER JOIN flotilla_categorias_gasto cat ON cat.id=g.categoria_id
-     WHERE g.fecha BETWEEN :desde AND :hasta
-     GROUP BY cat.nombre ORDER BY total DESC",
-    $p_rango
-);
-
-// Por vehículo
-$por_vehiculo = db_all(
-    "SELECT COALESCE(v.alias,CONCAT(v.marca,' ',v.modelo)) nombre, v.placas, v.estado,
-            COALESCE(SUM(g.monto),0) gasto_total,
-            COALESCE(SUM(CASE WHEN cat.nombre LIKE '%Combustible%' THEN g.monto ELSE 0 END),0) comb,
-            COALESCE(SUM(CASE WHEN cat.nombre LIKE '%Manteni%' THEN g.monto ELSE 0 END),0) mant,
-            COALESCE(SUM(CASE WHEN cat.nombre LIKE '%Multa%' THEN g.monto ELSE 0 END),0) multas
-     FROM flotilla_vehiculos v $suc_join
-     LEFT JOIN flotilla_gastos g ON g.vehiculo_id=v.id AND g.fecha BETWEEN :desde AND :hasta
-     LEFT JOIN flotilla_categorias_gasto cat ON cat.id=g.categoria_id
-     WHERE v.activo=1
-     GROUP BY v.id, v.alias, v.marca, v.modelo, v.placas, v.estado
-     ORDER BY gasto_total DESC",
-    $p_rango
-);
-
-// Detalle gastos
-$gastos_det = db_all(
-    "SELECT g.fecha, COALESCE(v.alias,CONCAT(v.marca,' ',v.modelo)) vehiculo, v.placas,
-            cat.nombre categoria, g.concepto, g.monto, g.proveedor, g.numero_factura
-     FROM flotilla_gastos g
-     INNER JOIN flotilla_vehiculos v ON v.id=g.vehiculo_id $suc_join
-     INNER JOIN flotilla_categorias_gasto cat ON cat.id=g.categoria_id
-     WHERE g.fecha BETWEEN :desde AND :hasta
-     ORDER BY g.fecha DESC, g.id DESC",
-    $p_rango
-);
-
-// Combustible
-$comb_det = db_all(
-    "SELECT DATE(c.fecha) fecha, COALESCE(v.alias,CONCAT(v.marca,' ',v.modelo)) vehiculo, v.placas,
-            con.nombre_completo conductor, c.km_odometro, c.litros, c.precio_litro,
-            ROUND(c.litros*c.precio_litro,2) total, c.rendimiento_kml, c.tipo_combustible, c.estacion
-     FROM flotilla_combustible c
-     INNER JOIN flotilla_vehiculos v ON v.id=c.vehiculo_id $suc_join
-     LEFT JOIN flotilla_conductores con ON con.id=c.conductor_id
-     WHERE DATE(c.fecha) BETWEEN :desde AND :hasta
-     ORDER BY c.fecha DESC, c.id DESC",
-    $p_rango
-);
-
-// Mantenimiento historial
-$mant_det = db_all(
-    "SELECT h.fecha, COALESCE(v.alias,CONCAT(v.marca,' ',v.modelo)) vehiculo, v.placas,
-            h.nombre servicio, h.taller, h.tecnico, h.km_odometro, h.costo,
-            h.proximo_km, h.proxima_fecha, h.numero_orden
-     FROM flotilla_mant_historial h
-     INNER JOIN flotilla_vehiculos v ON v.id=h.vehiculo_id $suc_join
-     WHERE h.fecha BETWEEN :desde AND :hasta
-     ORDER BY h.fecha DESC, h.id DESC",
-    $p_rango
-);
-
-// Documentos
-$docs_det = db_all(
-    "SELECT COALESCE(v.alias,CONCAT(v.marca,' ',v.modelo)) vehiculo, v.placas,
-            c.nombre_completo conductor, td.nombre tipo,
-            d.numero_documento, d.proveedor, d.fecha_inicio, d.fecha_vence, d.monto, d.estado
-     FROM flotilla_documentos d
-     INNER JOIN flotilla_tipos_documento td ON td.id=d.tipo_id
-     LEFT JOIN flotilla_vehiculos v ON v.id=d.vehiculo_id $suc_join
-     LEFT JOIN flotilla_conductores c ON c.id=d.conductor_id
-     ORDER BY d.fecha_vence ASC",
-    $suc_param
-);
-
-// ── Construir Excel ──────────────────────────────────────────────────────────
-$xls = new XlsxWriter();
-
-// ── Hoja 1: Resumen ──────────────────────────────────────────────────────────
-$xls->addSheet('Resumen');
-$xls->addHeaderRow(['REPORTE FLOTILLA VEHICULAR'], true);
-$xls->addRow(['Período:', $desde . ' al ' . $hasta]);
-$xls->addRow(['Generado:', date('d/m/Y H:i')]);
-$xls->addBlankRow();
-$xls->addHeaderRow(['KPI', 'Valor']);
-$xls->addRow(['Vehículos activos', $vehiculos_act]);
-$xls->addRow(['Gasto total', $gasto_total], 3);
-$xls->addRow(['Litros cargados', $litros], 2);
-$xls->addRow(['Servicios de mantenimiento', $servicios]);
-$xls->addBlankRow();
-$xls->addHeaderRow(['Categoría', 'Registros', 'Total $']);
-foreach ($por_cat as $r) {
-    $xls->addRow([$r['categoria'], $r['registros'], $r['total']], 3);
+$xlsx->addHeaderRow(['RESUMEN POR CATEGORÍA'], 5);
+$xlsx->addHeaderRow(['Categoría', 'Total', '% del gasto', 'Registros'], 1);
+$por_cat = [];
+foreach ($gastos as $g) {
+    $c = $g['categoria'];
+    $por_cat[$c]['total']      = ($por_cat[$c]['total'] ?? 0) + $g['monto'];
+    $por_cat[$c]['registros']  = ($por_cat[$c]['registros'] ?? 0) + 1;
+}
+arsort($por_cat);
+foreach ($por_cat as $cat => $d) {
+    $pct = $total_gastos > 0 ? round($d['total'] / $total_gastos * 100, 1) : 0;
+    $xlsx->addRow([$cat, $d['total'], $pct . '%', $d['registros']]);
 }
 
-// ── Hoja 2: Por vehículo ──────────────────────────────────────────────────────
-$xls->addSheet('Por Vehículo');
-$xls->addHeaderRow(['Vehículo', 'Placas', 'Estado', 'Gasto Total', 'Combustible', 'Mantenimiento', 'Multas'], true);
-foreach ($por_vehiculo as $r) {
-    $xls->addRow([$r['nombre'], $r['placas'], $r['estado'], $r['gasto_total'], $r['comb'], $r['mant'], $r['multas']], 3);
+// ── Hoja 2: Por vehículo ─────────────────────────────────────────────────────
+$xlsx->addSheet('Por Vehículo');
+$xlsx->addHeaderRow(['GASTO POR VEHÍCULO'], 5);
+$xlsx->addRow([$periodo_label]);
+$xlsx->addBlankRow();
+$xlsx->addHeaderRow(['Placas', 'Alias', 'Modelo', 'Km actual', 'Gasto total', 'Combustible', 'Mantenimiento', 'Multas', 'Registros'], 1);
+foreach ($por_vehiculo as $vg) {
+    $xlsx->addRow([
+        $vg['placas'], $vg['alias'], $vg['modelo'],
+        (int)$vg['km_actual'],
+        (float)$vg['gasto_total'],
+        (float)$vg['combustible'],
+        (float)$vg['mantenimiento'],
+        (float)$vg['multas'],
+        (int)$vg['registros'],
+    ]);
+}
+$xlsx->addBlankRow();
+$xlsx->addHeaderRow(['', '', '', 'TOTALES', array_sum(array_column($por_vehiculo, 'gasto_total'))], 1);
+
+// ── Hoja 3: Gastos detallados ────────────────────────────────────────────────
+$xlsx->addSheet('Gastos');
+$xlsx->addHeaderRow(['DETALLE DE GASTOS'], 5);
+$xlsx->addRow([$periodo_label]);
+$xlsx->addBlankRow();
+$xlsx->addHeaderRow(['Fecha', 'Placas', 'Alias', 'Vehículo', 'Categoría', 'Concepto', 'Monto', 'Proveedor', 'Factura', 'Km'], 1);
+foreach ($gastos as $g) {
+    $xlsx->addRow([
+        $g['fecha'],
+        $g['placas'],
+        $g['alias'],
+        trim($g['marca'] . ' ' . $g['modelo']),
+        $g['categoria'],
+        $g['concepto'],
+        (float)$g['monto'],
+        $g['proveedor'],
+        $g['factura'],
+        (int)$g['km'],
+    ]);
+}
+$xlsx->addBlankRow();
+$xlsx->addRow(['', '', '', '', '', 'TOTAL', array_sum(array_column($gastos, 'monto'))]);
+
+// ── Hoja 4: Combustible ──────────────────────────────────────────────────────
+$xlsx->addSheet('Combustible');
+$xlsx->addHeaderRow(['REGISTRO DE COMBUSTIBLE'], 5);
+$xlsx->addRow([$periodo_label]);
+$xlsx->addBlankRow();
+$xlsx->addHeaderRow(['Fecha', 'Placas', 'Alias', 'Litros', 'Precio/L', 'Total', 'Tipo', 'Estación', 'Km odómetro', 'Km recorridos', 'Rend. km/L', 'Conductor'], 1);
+foreach ($combustible as $c) {
+    $xlsx->addRow([
+        (string)$c['fecha'],
+        $c['placas'],
+        $c['alias'],
+        (float)$c['litros'],
+        (float)$c['precio_litro'],
+        (float)$c['total'],
+        $c['tipo_combustible'],
+        $c['estacion'],
+        (int)$c['km_odometro'],
+        (int)$c['km_recorridos'],
+        $c['kml'] > 0 ? (float)$c['kml'] : '',
+        $c['conductor'],
+    ]);
+}
+if (!empty($combustible)) {
+    $xlsx->addBlankRow();
+    $xlsx->addRow(['', '', 'TOTALES',
+        round(array_sum(array_column($combustible, 'litros')), 3),
+        '',
+        round(array_sum(array_column($combustible, 'total')), 2),
+    ]);
 }
 
-// ── Hoja 3: Gastos ────────────────────────────────────────────────────────────
-$xls->addSheet('Gastos');
-$xls->addHeaderRow(['Fecha', 'Vehículo', 'Placas', 'Categoría', 'Concepto', 'Monto', 'Proveedor', 'N° Factura'], true);
-foreach ($gastos_det as $r) {
-    $xls->addRow([$r['fecha'], $r['vehiculo'], $r['placas'], $r['categoria'], $r['concepto'], $r['monto'], $r['proveedor']??'', $r['numero_factura']??''], 3);
+// ── Hoja 5: Mantenimiento ────────────────────────────────────────────────────
+$xlsx->addSheet('Mantenimiento');
+$xlsx->addHeaderRow(['HISTORIAL DE MANTENIMIENTO'], 5);
+$xlsx->addRow([$periodo_label]);
+$xlsx->addBlankRow();
+$xlsx->addHeaderRow(['Fecha', 'Placas', 'Alias', 'Servicio', 'Taller', 'Técnico', 'Costo', 'Km odómetro', 'No. orden', 'Próxima fecha', 'Próximo km'], 1);
+foreach ($mantenimientos as $m) {
+    $xlsx->addRow([
+        (string)$m['fecha'],
+        $m['placas'],
+        $m['alias'],
+        $m['servicio'],
+        $m['taller'],
+        $m['tecnico'],
+        $m['costo'] > 0 ? (float)$m['costo'] : '',
+        (int)$m['km_odometro'],
+        $m['orden'],
+        $m['proxima_fecha'] ?: '',
+        $m['proximo_km'] > 0 ? (int)$m['proximo_km'] : '',
+    ]);
+}
+if (!empty($mantenimientos)) {
+    $xlsx->addBlankRow();
+    $xlsx->addRow(['', '', '', '', '', 'TOTAL',
+        round(array_sum(array_column($mantenimientos, 'costo')), 2),
+    ]);
 }
 
-// ── Hoja 4: Combustible ───────────────────────────────────────────────────────
-$xls->addSheet('Combustible');
-$xls->addHeaderRow(['Fecha', 'Vehículo', 'Placas', 'Conductor', 'KM', 'Litros', 'Precio/L', 'Total', 'km/L', 'Tipo', 'Estación'], true);
-foreach ($comb_det as $r) {
-    $xls->addRow([$r['fecha'], $r['vehiculo'], $r['placas'], $r['conductor']??'', $r['km_odometro'], $r['litros'], $r['precio_litro'], $r['total'], $r['rendimiento_kml']??'', $r['tipo_combustible'], $r['estacion']??''], 2);
+// ── Hoja 6: Documentos ──────────────────────────────────────────────────────
+$xlsx->addSheet('Documentos');
+$xlsx->addHeaderRow(['DOCUMENTOS VEHICULARES Y DE CONDUCTORES'], 5);
+$xlsx->addRow(['Generado: ' . date('d/m/Y H:i')]);
+$xlsx->addBlankRow();
+$xlsx->addHeaderRow(['Tipo', 'Placas', 'Alias', 'Conductor', 'No. documento', 'Proveedor', 'Inicio', 'Vencimiento', 'Estado', 'Monto'], 1);
+foreach ($documentos as $d) {
+    $xlsx->addRow([
+        $d['tipo'], $d['placas'], $d['alias'], $d['conductor'],
+        $d['numero'], $d['proveedor'],
+        $d['inicio'] ?: '', $d['vence'] ?: '',
+        $d['estado'],
+        $d['monto'] > 0 ? (float)$d['monto'] : '',
+    ]);
 }
 
-// ── Hoja 5: Mantenimiento ─────────────────────────────────────────────────────
-$xls->addSheet('Mantenimiento');
-$xls->addHeaderRow(['Fecha', 'Vehículo', 'Placas', 'Servicio', 'Taller', 'Técnico', 'KM', 'Costo', 'Próximo KM', 'Próxima Fecha', 'N° Orden'], true);
-foreach ($mant_det as $r) {
-    $xls->addRow([$r['fecha'], $r['vehiculo'], $r['placas'], $r['servicio'], $r['taller']??'', $r['tecnico']??'', $r['km_odometro'], $r['costo']??'', $r['proximo_km']??'', $r['proxima_fecha']??'', $r['numero_orden']??''], 2);
-}
-
-// ── Hoja 6: Documentos ────────────────────────────────────────────────────────
-$xls->addSheet('Documentos');
-$xls->addHeaderRow(['Vehículo', 'Placas', 'Conductor', 'Tipo', 'N° Documento', 'Proveedor', 'Inicio', 'Vencimiento', 'Monto', 'Estado'], true);
-foreach ($docs_det as $r) {
-    $xls->addRow([$r['vehiculo']??'', $r['placas']??'', $r['conductor']??'', $r['tipo'], $r['numero_documento']??'', $r['proveedor']??'', $r['fecha_inicio']??'', $r['fecha_vence']??'', $r['monto']??'', $r['estado']], 2);
-}
-
-// ── Descargar ─────────────────────────────────────────────────────────────────
-$fname = 'flotilla_reporte_' . str_replace('-','',$desde) . '_' . str_replace('-','',$hasta) . '.xlsx';
-$xls->download($fname);
+// ── Descargar ────────────────────────────────────────────────────────────────
+$filename = 'flotilla_reporte_' . str_replace('-', '', $desde) . '_' . str_replace('-', '', $hasta) . '.xlsx';
+$xlsx->download($filename);

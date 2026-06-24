@@ -1,4 +1,0 @@
-[09-Jun-2026 18:08:27 America/Tijuana] PHP Fatal error:  Uncaught Error: Call to undefined function render_lista_origenes() in /home/granodeo/mantenimiento.granodeoro.com.mx/admin/catalogos.php:281
-Stack trace:
-#0 {main}
-  thrown in /home/granodeo/mantenimiento.granodeoro.com.mx/admin/catalogos.php on line 281

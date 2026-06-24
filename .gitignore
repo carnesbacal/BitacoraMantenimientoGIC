@@ -3,6 +3,4 @@ config/db.php
 .DS_Store
 Thumbs.db
 backups/
-uploads/
 graphify-out/
-_deploy_infinityfree/

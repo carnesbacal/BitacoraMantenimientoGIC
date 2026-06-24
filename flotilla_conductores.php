@@ -1,136 +1,352 @@
 <?php
+/**
+ * ============================================================================
+ * flotilla_conductores.php - Gestión de conductores de la flotilla
+ * ============================================================================
+ */
 require_once __DIR__ . '/config/db.php';
 require_once __DIR__ . '/config/auth.php';
 require_once __DIR__ . '/config/helpers.php';
+require_once __DIR__ . '/config/flotilla_helpers.php';
+
 requerir_login();
-
 $u = usuario_actual();
-$ver_todas = tiene_permiso('ver_todas_sucursales');
-$sucursal_filtro = $ver_todas ? (int) input('sucursal', 0) : (int) $u['sucursal_id'];
+$puede_gestionar = tiene_permiso('administrar') || tiene_permiso('resolver');
 
-if (es_post() && csrf_valido(input('_csrf'))) {
-    $op = (string) input('op','');
-    if ($op === 'crear' || $op === 'editar') {
-        $nombre   = trim((string) input('nombre_completo',''));
-        $num_emp  = trim((string) input('numero_empleado','')) ?: null;
-        $tel      = trim((string) input('telefono','')) ?: null;
-        $email    = trim((string) input('email','')) ?: null;
-        $suc_id   = $ver_todas ? (int) input('sucursal_id',0) ?: null : ($u['sucursal_id'] ?: null);
-        $lic_num  = trim((string) input('licencia_numero','')) ?: null;
-        $lic_tipo = trim((string) input('licencia_tipo','')) ?: null;
-        $lic_vence= (string) input('licencia_vence','') ?: null;
-        $notas    = trim((string) input('notas','')) ?: null;
-        if (!$nombre) { flash_set('error','Nombre obligatorio.'); }
-        else {
-            if ($op === 'crear') {
-                db_exec("INSERT INTO flotilla_conductores (nombre_completo,numero_empleado,telefono,email,sucursal_id,licencia_numero,licencia_tipo,licencia_vence,notas) VALUES (:n,:ne,:t,:e,:s,:ln,:lt,:lv,:no)",
-                    ['n'=>$nombre,'ne'=>$num_emp,'t'=>$tel,'e'=>$email,'s'=>$suc_id,'ln'=>$lic_num,'lt'=>$lic_tipo,'lv'=>$lic_vence,'no'=>$notas]);
-                flash_set('success','Conductor registrado.');
-            } else {
-                $cid = (int) input('id',0);
-                db_exec("UPDATE flotilla_conductores SET nombre_completo=:n,numero_empleado=:ne,telefono=:t,email=:e,sucursal_id=:s,licencia_numero=:ln,licencia_tipo=:lt,licencia_vence=:lv,notas=:no WHERE id=:id",
-                    ['n'=>$nombre,'ne'=>$num_emp,'t'=>$tel,'e'=>$email,'s'=>$suc_id,'ln'=>$lic_num,'lt'=>$lic_tipo,'lv'=>$lic_vence,'no'=>$notas,'id'=>$cid]);
-                flash_set('success','Conductor actualizado.');
+$errores = [];
+
+if (es_post() && $puede_gestionar) {
+    if (!csrf_valido(input('_csrf'))) {
+        $errores[] = 'Token de seguridad inválido.';
+    } else {
+        $op = (string) input('op', '');
+
+        if ($op === 'crear' || $op === 'editar') {
+            $datos = [
+                'nombre_completo'  => trim((string) input('nombre_completo', '')),
+                'numero_empleado'  => trim((string) input('numero_empleado', '')) ?: null,
+                'telefono'         => trim((string) input('telefono', '')) ?: null,
+                'email'            => trim((string) input('email', '')) ?: null,
+                'sucursal_id'      => (int) input('sucursal_id', 0) ?: null,
+                'licencia_numero'  => trim((string) input('licencia_numero', '')) ?: null,
+                'licencia_tipo'    => trim((string) input('licencia_tipo', '')) ?: null,
+                'licencia_vence'   => trim((string) input('licencia_vence', '')) ?: null,
+                'notas'            => trim((string) input('notas', '')) ?: null,
+                'activo'           => 1,
+            ];
+
+            if ($datos['nombre_completo'] === '') $errores[] = 'El nombre es obligatorio.';
+
+            if (empty($errores)) {
+                try {
+                    if ($op === 'crear') {
+                        $cols   = implode(',', array_keys($datos));
+                        $params = ':' . implode(',:', array_keys($datos));
+                        db_exec("INSERT INTO flotilla_conductores ($cols) VALUES ($params)", $datos);
+                        flash_set('exito', 'Conductor registrado.');
+                    } else {
+                        $edit_id = (int) input('edit_id', 0);
+                        $sets    = implode(', ', array_map(fn($k) => "$k = :$k", array_keys($datos)));
+                        $datos['id'] = $edit_id;
+                        db_exec("UPDATE flotilla_conductores SET $sets WHERE id = :id", $datos);
+                        flash_set('exito', 'Conductor actualizado.');
+                    }
+                    header('Location: ' . url('flotilla_conductores.php'));
+                    exit;
+                } catch (Throwable $e) {
+                    $errores[] = 'Error: ' . $e->getMessage();
+                }
             }
         }
-    } elseif ($op === 'eliminar') {
-        db_exec("UPDATE flotilla_conductores SET activo=0 WHERE id=:id",['id'=>(int)input('id',0)]);
-        flash_set('success','Conductor desactivado.');
+
+        if ($op === 'toggle' && tiene_permiso('administrar')) {
+            $tid = (int) input('toggle_id', 0);
+            $c = db_one("SELECT id, activo FROM flotilla_conductores WHERE id = :id", ['id' => $tid]);
+            if ($c) {
+                $nuevo = $c['activo'] ? 0 : 1;
+                db_exec("UPDATE flotilla_conductores SET activo = :a WHERE id = :id", ['a' => $nuevo, 'id' => $tid]);
+                flash_set('exito', $nuevo ? 'Conductor activado.' : 'Conductor desactivado.');
+            }
+            header('Location: ' . url('flotilla_conductores.php'));
+            exit;
+        }
     }
-    header('Location:'.url('flotilla_conductores.php')); exit;
 }
 
-$titulo_pagina = 'Flotilla — Conductores';
+$conductores = db_all(
+    "SELECT c.*, s.nombre sucursal_nombre,
+            (SELECT COUNT(*) FROM flotilla_vehiculos WHERE conductor_asignado_id = c.id AND activo = 1) vehiculos_asignados,
+            DATEDIFF(c.licencia_vence, CURDATE()) dias_licencia
+     FROM flotilla_conductores c
+     LEFT JOIN sucursales s ON c.sucursal_id = s.id
+     ORDER BY c.activo DESC, c.nombre_completo ASC"
+);
+$sucursales = tiene_permiso('ver_todas_sucursales')
+    ? db_all("SELECT id, nombre FROM sucursales WHERE activo=1 ORDER BY nombre")
+    : [];
+
+$titulo_pagina = 'Flotilla · Conductores';
 $pagina_activa = 'flotilla_conductores';
 require_once __DIR__ . '/config/header.php';
 require_once __DIR__ . '/config/flotilla_nav.php';
-
-$conductores = db_all(
-    "SELECT c.*, s.nombre sucursal_nombre FROM flotilla_conductores c LEFT JOIN sucursales s ON s.id=c.sucursal_id WHERE c.activo=1".($sucursal_filtro?" AND c.sucursal_id=:sid":"")." ORDER BY c.nombre_completo",
-    $sucursal_filtro ? ['sid'=>$sucursal_filtro] : []
-);
-$sucursales = $ver_todas ? db_all("SELECT id,nombre FROM sucursales WHERE activo=1 ORDER BY nombre") : [];
-$editar_id = (int) input('editar',0);
-$editar_c  = $editar_id ? db_one("SELECT * FROM flotilla_conductores WHERE id=:id",['id'=>$editar_id]) : null;
-$fm = flash_get();
 ?>
-<div class="space-y-4 animate-fade-in">
-<?php foreach ($fm as $f): ?>
-<div class="px-4 py-3 rounded-lg text-sm <?= $f['tipo']==='success'?'bg-emerald-50 text-emerald-800 border border-emerald-200':'bg-red-50 text-red-800 border border-red-200' ?>"><?= e($f['mensaje']) ?></div>
-<?php endforeach; ?>
-<div class="flex items-center justify-between">
-    <h1 class="text-xl font-display font-bold text-zinc-900">Conductores</h1>
-    <button onclick="document.getElementById('modal-cond').classList.remove('hidden')" class="flex items-center gap-2 px-4 py-2 rounded-lg bg-bacal-700 hover:bg-bacal-800 text-white text-sm font-semibold">
-        <i data-lucide="plus" class="w-4 h-4"></i> Agregar conductor
-    </button>
-</div>
-<div class="bg-white rounded-xl border border-zinc-200 shadow-sm overflow-hidden">
-    <table class="w-full text-sm">
-        <thead class="bg-zinc-50 border-b border-zinc-200">
-            <tr class="text-left text-xs font-semibold text-zinc-500 uppercase tracking-wide">
-                <th class="px-4 py-3">Nombre</th><th class="px-4 py-3">N° Emp.</th><th class="px-4 py-3">Teléfono</th>
-                <th class="px-4 py-3">Licencia</th><th class="px-4 py-3">Vence lic.</th><th class="px-4 py-3">Sucursal</th><th class="px-4 py-3"></th>
-            </tr>
-        </thead>
-        <tbody class="divide-y divide-zinc-100">
-            <?php if (empty($conductores)): ?>
-            <tr><td colspan="7" class="px-4 py-10 text-center text-zinc-400">Sin conductores registrados.</td></tr>
-            <?php endif; ?>
-            <?php foreach ($conductores as $c): ?>
-            <tr class="hover:bg-zinc-50">
-                <td class="px-4 py-2.5 font-medium text-zinc-900"><?= e($c['nombre_completo']) ?></td>
-                <td class="px-4 py-2.5 text-zinc-600"><?= e($c['numero_empleado'] ?? '—') ?></td>
-                <td class="px-4 py-2.5 text-zinc-600"><?= e($c['telefono'] ?? '—') ?></td>
-                <td class="px-4 py-2.5 text-xs"><?= e($c['licencia_numero'] ?? '—') ?><?= $c['licencia_tipo'] ? ' ('.$c['licencia_tipo'].')' : '' ?></td>
-                <td class="px-4 py-2.5 text-xs <?= ($c['licencia_vence'] && strtotime($c['licencia_vence']) < strtotime('+30 days')) ? 'text-red-600 font-semibold' : 'text-zinc-600' ?>">
-                    <?= $c['licencia_vence'] ? fmt_fecha($c['licencia_vence'],false) : '—' ?>
-                </td>
-                <td class="px-4 py-2.5 text-zinc-500 text-xs"><?= e($c['sucursal_nombre'] ?? '—') ?></td>
-                <td class="px-4 py-2.5">
-                    <div class="flex gap-2">
-                        <a href="?editar=<?= $c['id'] ?>" class="text-zinc-400 hover:text-bacal-700"><i data-lucide="pencil" class="w-4 h-4"></i></a>
-                        <form method="POST" onsubmit="return confirm('¿Desactivar?')" class="inline">
-                            <?= csrf_input() ?><input type="hidden" name="op" value="eliminar"><input type="hidden" name="id" value="<?= $c['id'] ?>">
-                            <button type="submit" class="text-zinc-400 hover:text-red-500"><i data-lucide="trash-2" class="w-4 h-4"></i></button>
-                        </form>
-                    </div>
-                </td>
-            </tr>
-            <?php endforeach; ?>
-        </tbody>
-    </table>
-</div>
+
+<div class="animate-fade-in space-y-5">
+
+    <!-- Header -->
+    <div class="flex items-center justify-between flex-wrap gap-3">
+        <div class="flex items-center gap-2">
+            <a href="<?= url('flotilla_vehiculos.php') ?>"
+               class="text-zinc-500 hover:text-bacal-700 flex items-center gap-1 text-sm">
+                <i data-lucide="arrow-left" class="w-4 h-4"></i> Flotilla
+            </a>
+            <span class="text-zinc-300">/</span>
+            <h2 class="font-display text-xl font-extrabold text-zinc-900 flex items-center gap-2">
+                <i data-lucide="users" class="w-5 h-5 text-bacal-700"></i>
+                Conductores
+            </h2>
+        </div>
+        <?php if ($puede_gestionar): ?>
+        <button onclick="document.getElementById('modal-conductor').classList.remove('hidden')"
+                class="px-3 py-2 rounded-lg bg-bacal-700 hover:bg-bacal-800 text-white text-sm font-semibold flex items-center gap-1.5">
+            <i data-lucide="plus" class="w-4 h-4"></i> Nuevo conductor
+        </button>
+        <?php endif; ?>
+    </div>
+
+    <!-- Flash -->
+    <?php foreach (flash_get() as $tipo => $msg): ?>
+    <div class="px-4 py-3 rounded-lg text-sm font-medium <?= $tipo === 'exito' ? 'bg-emerald-50 border border-emerald-300 text-emerald-800' : 'bg-red-50 border border-red-300 text-red-800' ?>">
+        <?= e($msg) ?>
+    </div>
+    <?php endforeach; ?>
+
+    <?php if ($errores): ?>
+    <div class="px-4 py-3 rounded-lg bg-red-50 border border-red-300 text-sm text-red-800">
+        <?php foreach ($errores as $err): ?><div>✗ <?= e($err) ?></div><?php endforeach; ?>
+    </div>
+    <?php endif; ?>
+
+    <!-- Lista -->
+    <?php if (empty($conductores)): ?>
+    <div class="bg-white rounded-xl border border-zinc-200 py-16 text-center">
+        <i data-lucide="user-x" class="w-12 h-12 mx-auto text-zinc-300 mb-3"></i>
+        <p class="font-semibold text-zinc-700">Sin conductores registrados</p>
+    </div>
+    <?php else: ?>
+    <div class="bg-white rounded-xl border border-zinc-200 shadow-sm overflow-hidden">
+        <table class="w-full text-sm js-tabla-orden">
+            <thead class="bg-zinc-50 border-b border-zinc-200">
+                <tr>
+                    <th class="text-left px-4 py-3 text-xs font-bold text-zinc-500 uppercase">Conductor</th>
+                    <th class="text-left px-4 py-3 text-xs font-bold text-zinc-500 uppercase hidden md:table-cell">Licencia</th>
+                    <th class="text-left px-4 py-3 text-xs font-bold text-zinc-500 uppercase hidden lg:table-cell">Sucursal</th>
+                    <th class="text-center px-4 py-3 text-xs font-bold text-zinc-500 uppercase hidden md:table-cell">Vehículos</th>
+                    <th class="text-left px-4 py-3 text-xs font-bold text-zinc-500 uppercase">Estado</th>
+                    <?php if ($puede_gestionar): ?>
+                    <th class="px-4 py-3"></th>
+                    <?php endif; ?>
+                </tr>
+            </thead>
+            <tbody class="divide-y divide-zinc-100">
+                <?php foreach ($conductores as $c):
+                    $lic_dias = $c['dias_licencia'];
+                    $lic_alerta = $lic_dias !== null && $lic_dias <= 60;
+                    $lic_vencida = $lic_dias !== null && $lic_dias < 0;
+                ?>
+                <tr class="hover:bg-zinc-50 <?= !$c['activo'] ? 'opacity-50' : '' ?>">
+                    <td class="px-4 py-3">
+                        <div class="flex items-center gap-3">
+                            <div class="w-9 h-9 rounded-full bg-bacal-100 text-bacal-700 font-bold text-sm flex items-center justify-center flex-shrink-0">
+                                <?= strtoupper(substr($c['nombre_completo'], 0, 1)) ?>
+                            </div>
+                            <div>
+                                <div class="font-semibold text-zinc-900"><?= e($c['nombre_completo']) ?></div>
+                                <div class="text-xs text-zinc-500 flex items-center gap-2">
+                                    <?= $c['numero_empleado'] ? '#' . e($c['numero_empleado']) : '' ?>
+                                    <?= $c['telefono'] ? '<i data-lucide="phone" class="w-3 h-3 inline"></i> ' . e($c['telefono']) : '' ?>
+                                </div>
+                            </div>
+                        </div>
+                    </td>
+                    <td class="px-4 py-3 hidden md:table-cell">
+                        <?php if ($c['licencia_numero']): ?>
+                        <div class="font-mono text-xs font-semibold <?= $lic_vencida ? 'text-red-700' : ($lic_alerta ? 'text-amber-700' : 'text-zinc-700') ?>">
+                            <?= e($c['licencia_numero']) ?>
+                            <?= $c['licencia_tipo'] ? " ({$c['licencia_tipo']})" : '' ?>
+                        </div>
+                        <?php if ($c['licencia_vence']): ?>
+                        <div class="text-xs <?= $lic_vencida ? 'text-red-600 font-bold' : ($lic_alerta ? 'text-amber-600' : 'text-zinc-400') ?>">
+                            Vence: <?= fmt_fecha($c['licencia_vence']) ?>
+                            <?= $lic_vencida ? ' · VENCIDA' : ($lic_alerta ? " · {$lic_dias}d" : '') ?>
+                        </div>
+                        <?php endif; ?>
+                        <?php else: ?>
+                        <span class="text-zinc-400 text-xs">—</span>
+                        <?php endif; ?>
+                    </td>
+                    <td class="px-4 py-3 hidden lg:table-cell text-zinc-600 text-sm">
+                        <?= $c['sucursal_nombre'] ?? '—' ?>
+                    </td>
+                    <td class="px-4 py-3 text-center hidden md:table-cell">
+                        <span class="inline-flex items-center justify-center w-7 h-7 rounded-full <?= $c['vehiculos_asignados'] > 0 ? 'bg-bacal-100 text-bacal-700 font-bold' : 'bg-zinc-100 text-zinc-400' ?> text-xs">
+                            <?= $c['vehiculos_asignados'] ?>
+                        </span>
+                    </td>
+                    <td class="px-4 py-3">
+                        <?php if ($c['activo']): ?>
+                        <span class="inline-flex items-center px-2 py-0.5 rounded-full text-xs font-semibold bg-emerald-100 text-emerald-800">Activo</span>
+                        <?php else: ?>
+                        <span class="inline-flex items-center px-2 py-0.5 rounded-full text-xs font-semibold bg-zinc-100 text-zinc-600">Inactivo</span>
+                        <?php endif; ?>
+                    </td>
+                    <?php if ($puede_gestionar): ?>
+                    <td class="px-4 py-3 text-right">
+                        <div class="flex items-center justify-end gap-1">
+                            <button onclick="abrirEditarConductor(<?= htmlspecialchars(json_encode($c), ENT_QUOTES) ?>)"
+                                    class="p-1.5 rounded-lg hover:bg-zinc-100 text-zinc-500 hover:text-zinc-700">
+                                <i data-lucide="pencil" class="w-4 h-4"></i>
+                            </button>
+                            <?php if (tiene_permiso('administrar')): ?>
+                            <form method="POST" class="inline">
+                                <?= csrf_input() ?>
+                                <input type="hidden" name="op" value="toggle">
+                                <input type="hidden" name="toggle_id" value="<?= $c['id'] ?>">
+                                <button type="submit"
+                                        class="p-1.5 rounded-lg hover:bg-zinc-100 text-zinc-400 hover:text-zinc-600"
+                                        title="<?= $c['activo'] ? 'Desactivar' : 'Activar' ?>">
+                                    <i data-lucide="<?= $c['activo'] ? 'eye-off' : 'eye' ?>" class="w-4 h-4"></i>
+                                </button>
+                            </form>
+                            <?php endif; ?>
+                        </div>
+                    </td>
+                    <?php endif; ?>
+                </tr>
+                <?php endforeach; ?>
+            </tbody>
+        </table>
+    </div>
+    <?php endif; ?>
 </div>
 
-<?php $mc = $editar_c ?? []; ?>
-<div id="modal-cond" class="<?= $editar_c ? '' : 'hidden' ?> fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4">
-    <div class="bg-white rounded-2xl shadow-xl w-full max-w-lg max-h-[90vh] overflow-y-auto">
-        <div class="flex items-center justify-between p-5 border-b border-zinc-200">
-            <h2 class="text-base font-bold text-zinc-900"><?= $editar_c ? 'Editar' : 'Agregar' ?> conductor</h2>
-            <button onclick="document.getElementById('modal-cond').classList.add('hidden')" class="text-zinc-400 hover:text-zinc-600"><i data-lucide="x" class="w-5 h-5"></i></button>
+<!-- Modal crear/editar conductor -->
+<div id="modal-conductor" class="hidden fixed inset-0 z-50 flex items-center justify-center p-4">
+    <div class="absolute inset-0 bg-black/50" onclick="cerrarModalConductor()"></div>
+    <div class="relative bg-white rounded-xl shadow-2xl w-full max-w-lg max-h-[90vh] overflow-y-auto">
+        <div class="sticky top-0 bg-white border-b border-zinc-200 px-6 py-4 flex items-center justify-between rounded-t-xl">
+            <h3 id="modal-conductor-titulo" class="font-display text-base font-bold text-zinc-900 flex items-center gap-2">
+                <i data-lucide="user-plus" class="w-4 h-4 text-bacal-700"></i>
+                Nuevo conductor
+            </h3>
+            <button onclick="cerrarModalConductor()" class="text-zinc-400 hover:text-zinc-600 p-1 rounded">
+                <i data-lucide="x" class="w-5 h-5"></i>
+            </button>
         </div>
-        <form method="POST" class="p-5 space-y-4">
+        <form method="POST" class="p-6 space-y-4">
             <?= csrf_input() ?>
-            <input type="hidden" name="op" value="<?= $editar_c ? 'editar' : 'crear' ?>">
-            <?php if ($editar_c): ?><input type="hidden" name="id" value="<?= $mc['id'] ?>"><?php endif; ?>
-            <div class="grid grid-cols-2 gap-3">
-                <div class="col-span-2"><label class="block text-xs font-bold text-zinc-700 mb-1">Nombre completo *</label><input type="text" name="nombre_completo" value="<?= e($mc['nombre_completo']??'') ?>" required class="w-full px-3 py-2 rounded-lg border border-zinc-300 text-sm focus:outline-none focus:border-bacal-700"></div>
-                <div><label class="block text-xs font-bold text-zinc-700 mb-1">N° Empleado</label><input type="text" name="numero_empleado" value="<?= e($mc['numero_empleado']??'') ?>" class="w-full px-3 py-2 rounded-lg border border-zinc-300 text-sm focus:outline-none focus:border-bacal-700"></div>
-                <div><label class="block text-xs font-bold text-zinc-700 mb-1">Teléfono</label><input type="text" name="telefono" value="<?= e($mc['telefono']??'') ?>" class="w-full px-3 py-2 rounded-lg border border-zinc-300 text-sm focus:outline-none focus:border-bacal-700"></div>
-                <div class="col-span-2"><label class="block text-xs font-bold text-zinc-700 mb-1">Email</label><input type="email" name="email" value="<?= e($mc['email']??'') ?>" class="w-full px-3 py-2 rounded-lg border border-zinc-300 text-sm focus:outline-none focus:border-bacal-700"></div>
-                <div><label class="block text-xs font-bold text-zinc-700 mb-1">N° Licencia</label><input type="text" name="licencia_numero" value="<?= e($mc['licencia_numero']??'') ?>" class="w-full px-3 py-2 rounded-lg border border-zinc-300 text-sm focus:outline-none focus:border-bacal-700"></div>
-                <div><label class="block text-xs font-bold text-zinc-700 mb-1">Tipo (A,B,C…)</label><input type="text" name="licencia_tipo" value="<?= e($mc['licencia_tipo']??'') ?>" class="w-full px-3 py-2 rounded-lg border border-zinc-300 text-sm focus:outline-none focus:border-bacal-700"></div>
-                <div><label class="block text-xs font-bold text-zinc-700 mb-1">Vence licencia</label><input type="date" name="licencia_vence" value="<?= e($mc['licencia_vence']??'') ?>" class="w-full px-3 py-2 rounded-lg border border-zinc-300 text-sm focus:outline-none focus:border-bacal-700"></div>
-                <?php if ($ver_todas): ?>
-                <div><label class="block text-xs font-bold text-zinc-700 mb-1">Sucursal</label><select name="sucursal_id" class="w-full px-3 py-2 rounded-lg border border-zinc-300 text-sm focus:outline-none focus:border-bacal-700"><option value="">Sin sucursal</option><?php foreach ($sucursales as $s): ?><option value="<?= $s['id'] ?>" <?= ($mc['sucursal_id']??0)==$s['id']?'selected':'' ?>><?= e($s['nombre']) ?></option><?php endforeach; ?></select></div>
+            <input type="hidden" name="op" id="conductor-op" value="crear">
+            <input type="hidden" name="edit_id" id="conductor-edit-id" value="">
+
+            <div class="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                <div class="sm:col-span-2">
+                    <label class="block text-xs font-bold text-zinc-700 mb-1">Nombre completo <span class="text-red-500">*</span></label>
+                    <input type="text" name="nombre_completo" id="cond-nombre" required maxlength="150"
+                           class="w-full px-3 py-2 rounded-lg border border-zinc-300 text-sm focus:outline-none focus:ring-2 focus:ring-bacal-500">
+                </div>
+                <div>
+                    <label class="block text-xs font-bold text-zinc-700 mb-1">Número de empleado</label>
+                    <input type="text" name="numero_empleado" id="cond-empleado" maxlength="30"
+                           class="w-full px-3 py-2 rounded-lg border border-zinc-300 text-sm focus:outline-none focus:ring-2 focus:ring-bacal-500">
+                </div>
+                <div>
+                    <label class="block text-xs font-bold text-zinc-700 mb-1">Teléfono</label>
+                    <input type="tel" name="telefono" id="cond-telefono" maxlength="20"
+                           class="w-full px-3 py-2 rounded-lg border border-zinc-300 text-sm focus:outline-none focus:ring-2 focus:ring-bacal-500">
+                </div>
+                <div>
+                    <label class="block text-xs font-bold text-zinc-700 mb-1">Email</label>
+                    <input type="email" name="email" id="cond-email" maxlength="100"
+                           class="w-full px-3 py-2 rounded-lg border border-zinc-300 text-sm focus:outline-none focus:ring-2 focus:ring-bacal-500">
+                </div>
+                <?php if ($sucursales): ?>
+                <div>
+                    <label class="block text-xs font-bold text-zinc-700 mb-1">Sucursal</label>
+                    <select name="sucursal_id" id="cond-sucursal"
+                            class="w-full px-3 py-2 rounded-lg border border-zinc-300 text-sm bg-white focus:outline-none focus:ring-2 focus:ring-bacal-500">
+                        <option value="">Sin asignar</option>
+                        <?php foreach ($sucursales as $s): ?>
+                        <option value="<?= $s['id'] ?>"><?= e($s['nombre']) ?></option>
+                        <?php endforeach; ?>
+                    </select>
+                </div>
                 <?php endif; ?>
+                <div>
+                    <label class="block text-xs font-bold text-zinc-700 mb-1">No. Licencia</label>
+                    <input type="text" name="licencia_numero" id="cond-licencia-num" maxlength="50"
+                           class="w-full px-3 py-2 rounded-lg border border-zinc-300 text-sm font-mono focus:outline-none focus:ring-2 focus:ring-bacal-500">
+                </div>
+                <div>
+                    <label class="block text-xs font-bold text-zinc-700 mb-1">Tipo de licencia</label>
+                    <select name="licencia_tipo" id="cond-licencia-tipo"
+                            class="w-full px-3 py-2 rounded-lg border border-zinc-300 text-sm bg-white focus:outline-none focus:ring-2 focus:ring-bacal-500">
+                        <option value="">—</option>
+                        <option value="A">A - Motocicleta</option>
+                        <option value="B">B - Auto particular</option>
+                        <option value="C">C - Camión unitario</option>
+                        <option value="D">D - Autobús</option>
+                        <option value="E">E - Tractocamión</option>
+                    </select>
+                </div>
+                <div>
+                    <label class="block text-xs font-bold text-zinc-700 mb-1">Licencia vence</label>
+                    <input type="date" name="licencia_vence" id="cond-licencia-vence"
+                           class="w-full px-3 py-2 rounded-lg border border-zinc-300 text-sm focus:outline-none focus:ring-2 focus:ring-bacal-500">
+                </div>
+                <div class="sm:col-span-2">
+                    <label class="block text-xs font-bold text-zinc-700 mb-1">Notas</label>
+                    <textarea name="notas" id="cond-notas" rows="2" maxlength="1000"
+                              class="w-full px-3 py-2 rounded-lg border border-zinc-300 text-sm focus:outline-none focus:ring-2 focus:ring-bacal-500"></textarea>
+                </div>
             </div>
-            <div><label class="block text-xs font-bold text-zinc-700 mb-1">Notas</label><textarea name="notas" rows="2" class="w-full px-3 py-2 rounded-lg border border-zinc-300 text-sm focus:outline-none focus:border-bacal-700"><?= e($mc['notas']??'') ?></textarea></div>
-            <div class="flex justify-end gap-3 pt-3 border-t border-zinc-100">
-                <button type="button" onclick="document.getElementById('modal-cond').classList.add('hidden')" class="px-4 py-2 rounded-lg border border-zinc-300 text-zinc-700 text-sm">Cancelar</button>
-                <button type="submit" class="px-5 py-2 rounded-lg bg-bacal-700 hover:bg-bacal-800 text-white text-sm font-semibold">Guardar</button>
+
+            <div class="flex justify-end gap-2 pt-2 border-t border-zinc-100">
+                <button type="button" onclick="cerrarModalConductor()"
+                        class="px-4 py-2 rounded-lg border border-zinc-300 text-zinc-700 text-sm font-medium hover:bg-zinc-50">Cancelar</button>
+                <button type="submit"
+                        class="px-4 py-2 rounded-lg bg-bacal-700 text-white text-sm font-semibold hover:bg-bacal-800">Guardar</button>
             </div>
         </form>
     </div>
 </div>
+
+<script>
+function abrirEditarConductor(c) {
+    document.getElementById('conductor-op').value         = 'editar';
+    document.getElementById('conductor-edit-id').value    = c.id;
+    document.getElementById('modal-conductor-titulo').innerHTML =
+        '<i data-lucide="pencil" class="w-4 h-4 text-bacal-700"></i> Editar conductor';
+    document.getElementById('cond-nombre').value          = c.nombre_completo  || '';
+    document.getElementById('cond-empleado').value        = c.numero_empleado  || '';
+    document.getElementById('cond-telefono').value        = c.telefono         || '';
+    document.getElementById('cond-email').value           = c.email            || '';
+    document.getElementById('cond-licencia-num').value    = c.licencia_numero  || '';
+    document.getElementById('cond-licencia-vence').value  = c.licencia_vence   || '';
+    document.getElementById('cond-notas').value           = c.notas            || '';
+    const st = document.getElementById('cond-sucursal');
+    if (st) st.value = c.sucursal_id || '';
+    const lt = document.getElementById('cond-licencia-tipo');
+    if (lt) lt.value = c.licencia_tipo || '';
+    document.getElementById('modal-conductor').classList.remove('hidden');
+    if (window.lucide) window.lucide.createIcons();
+}
+function cerrarModalConductor() {
+    document.getElementById('conductor-op').value      = 'crear';
+    document.getElementById('conductor-edit-id').value = '';
+    document.getElementById('modal-conductor-titulo').innerHTML =
+        '<i data-lucide="user-plus" class="w-4 h-4 text-bacal-700"></i> Nuevo conductor';
+    document.getElementById('modal-conductor').classList.add('hidden');
+}
+</script>
+
 <?php require_once __DIR__ . '/config/footer.php'; ?>

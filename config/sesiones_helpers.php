@@ -137,6 +137,7 @@ function sesion_sigue_activa(?int $usuario_id = null): array {
         return ['activa' => false, 'motivo' => $row['motivo_cierre']];
     }
 
+    // Actualizar ultima_actividad (ON UPDATE CURRENT_TIMESTAMP lo hace solo cuando hay un cambio)
     db_exec(
         "UPDATE sesiones SET ultima_actividad = NOW() WHERE session_id = :sid",
         ['sid' => $session_id]

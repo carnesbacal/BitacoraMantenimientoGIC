@@ -101,6 +101,14 @@ function fmt_fecha(?string $fecha, bool $con_hora = true): string {
 }
 
 /**
+ * Formatea fecha con hora. Alias de fmt_fecha(\$fecha, true).
+ * Usado en flotilla (combustible, viajes, siniestros, checklist) y otras vistas.
+ */
+function fmt_fecha_hora(?string $fecha): string {
+    return fmt_fecha($fecha, true);
+}
+
+/**
  * Tiempo relativo legible: "hace 5 minutos", "hace 2 horas", etc.
  */
 function fmt_tiempo_relativo(?string $fecha): string {
@@ -221,6 +229,26 @@ function color_avatar(?string $texto): string {
  * @param string $clases_extra Clases extra para el contenedor
  * @return string HTML del avatar
  */
+/**
+ * Lee una preferencia de UI del usuario en sesión.
+ * Si la clave no existe devuelve $defecto (null por omisión).
+ *
+ * Para activar una preferencia desde la BD:
+ *   UPDATE usuarios SET preferencias = '{"sucursal_selector":"radio"}' WHERE id = X;
+ */
+function usuario_preferencia(string $clave, mixed $defecto = null): mixed {
+    $prefs = usuario_actual()['preferencias'] ?? [];
+    return $prefs[$clave] ?? $defecto;
+}
+
+/**
+ * ¿El usuario prefiere el selector de sucursal como radio buttons?
+ * Se activa con: preferencias → {"sucursal_selector":"radio"}
+ */
+function usuario_prefiere_radio_sucursal(): bool {
+    return usuario_preferencia('sucursal_selector') === 'radio';
+}
+
 function render_avatar(?array $usuario, string $tamano = 'w-8 h-8', string $clases_extra = ''): string {
     if (!$usuario) {
         return '<div class="' . $tamano . ' rounded-full bg-zinc-200 ' . $clases_extra . '"></div>';

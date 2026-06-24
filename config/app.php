@@ -8,7 +8,7 @@
  * ============================================================================
  */
 
-define('APP_NAME',    'Carnes Bacal · Mantenimiento');
+define('APP_NAME',    'GIC · Mantenimiento');
 define('APP_VERSION', '2.0.9');
 
 $_protocolo = (!empty($_SERVER['HTTPS']) && $_SERVER['HTTPS'] !== 'off') ? 'https' : 'http';

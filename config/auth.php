@@ -22,6 +22,12 @@ if (session_status() === PHP_SESSION_NONE) {
     $cookie_path = defined('APP_URL')
         ? rtrim(parse_url(APP_URL, PHP_URL_PATH) ?: '/', '/') . '/'
         : '/';
+    // Algunos navegadores no envían la cookie si el Path contiene caracteres
+    // especiales como paréntesis (ej: carpeta "BitacoraMantenimiento(Local)").
+    // En ese caso usamos '/' para que la sesión funcione igual.
+    if (preg_match('/[();\s,]/', $cookie_path)) {
+        $cookie_path = '/';
+    }
     ini_set('session.cookie_path', $cookie_path);
     unset($cookie_path);
     session_start();
@@ -37,7 +43,7 @@ define('TIEMPO_SESION_INACTIVA_MIN', 120); // 2 horas de inactividad
  * (por ejemplo se agregan o quitan campos en login()), INCREMENTAR este número.
  * Esto fuerza un logout automático de sesiones viejas que tengan estructura distinta.
  */
-define('SESSION_VERSION', 5);
+define('SESSION_VERSION', 6);
 
 /**
  * Intenta iniciar sesión con usuario y contraseña.
@@ -53,7 +59,8 @@ function login(string $usuario, string $password): array {
     $row = db_one(
         "SELECT u.*, r.nombre AS rol_nombre,
                 r.puede_administrar, r.puede_ver_todas_sucursales,
-                r.puede_resolver, r.puede_crear_solicitud, r.puede_ver_reportes
+                r.puede_resolver, r.puede_crear_solicitud, r.puede_ver_reportes,
+                u.preferencias
          FROM usuarios u
          INNER JOIN roles r ON u.rol_id = r.id
          WHERE u.usuario = :usuario AND u.activo = 1",
@@ -127,6 +134,7 @@ function login(string $usuario, string $password): array {
             'ver_reportes'        => (bool) $row['puede_ver_reportes'],
         ],
         'debe_cambiar_password' => (bool) $row['debe_cambiar_password'],
+        'preferencias' => json_decode((string) ($row['preferencias'] ?? '{}'), true) ?: [],
     ];
     $_SESSION['ultima_actividad'] = time();
     $_SESSION['version'] = SESSION_VERSION;
@@ -240,12 +248,10 @@ function esta_logueado(): bool {
     }
 
     $_SESSION['ultima_actividad'] = $ahora;
-
     // Limpieza de sesiones huérfanas: 1% de probabilidad por request para no añadir latencia
     if (mt_rand(1, 100) === 1) {
         limpiar_sesiones_huerfanas();
     }
-
     return true;
 }
 

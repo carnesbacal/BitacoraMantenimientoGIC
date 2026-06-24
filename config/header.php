@@ -60,8 +60,8 @@ try {
     <!-- Alpine.js (debe cargar ANTES que lucide para que el DOM dinámico funcione) -->
     <script defer src="https://cdn.jsdelivr.net/npm/alpinejs@3.x.x/dist/cdn.min.js"></script>
 
-    <!-- Lucide icons -->
-    <script src="https://unpkg.com/lucide@latest"></script>
+    <!-- Lucide icons (alojado localmente: carga instantánea desde el servidor, sin parpadeo al cambiar de página) -->
+    <script src="<?= url('assets/js/lucide.min.js') ?>?v=0.511.0"></script>
 
     <!-- Aplicar modo oscuro ANTES de renderizar para evitar flash blanco -->
     <script>
@@ -352,7 +352,7 @@ try {
                    @keydown.up.prevent="moverSeleccion(-1)"
                    @keydown.enter.prevent="abrirSeleccionado()"
                    @keydown.escape.prevent="cerrar()"
-                   placeholder="Buscar incidencias, equipos, usuarios…"
+                   placeholder="Buscar incidencias, equipos, refacciones, vehículos…"
                    class="flex-1 text-base focus:outline-none bg-transparent text-zinc-900 placeholder:text-zinc-400">
             <kbd class="text-[10px] font-mono px-1.5 py-0.5 rounded bg-zinc-100 text-zinc-500 border border-zinc-200">ESC</kbd>
         </div>
@@ -699,12 +699,12 @@ function busquedaGlobal() {
         <!-- Logo / Marca -->
         <div class="h-16 flex items-center border-b border-zinc-200 px-4 flex-shrink-0">
             <a href="<?= url('dashboard.php') ?>" class="flex items-center gap-2.5 overflow-hidden">
-                <div class="w-9 h-9 flex-shrink-0 rounded-lg bg-bacal-700 flex items-center justify-center text-white font-display font-bold text-lg shadow-sm">
+                <div class="w-9 h-9 flex-shrink-0 rounded-lg bg-bacal-700 flex items-center justify-center text-white font-display font-bold text-[10px] tracking-tight shadow-sm">
                     GIC
                 </div>
                 <div x-show="sidebarAbierto" x-transition.opacity class="overflow-hidden">
-                    <div class="font-display font-bold text-zinc-900 text-base leading-tight">Grupo Industrial Corral</div>
-                    <div class="text-[10px] text-zinc-500 uppercase tracking-wider font-semibold">Bitácora · Mantenimiento</div>
+                    <div class="font-display font-extrabold text-bacal-700 text-sm leading-tight tracking-wide">SIGMA</div>
+                    <div class="font-display font-bold text-zinc-800 dark:text-white text-xs leading-tight mt-0.5">GRUPO INDUSTRIAL CORRAL</div>
                 </div>
             </a>
         </div>
@@ -795,7 +795,7 @@ function busquedaGlobal() {
             </div>
 
             <a href="<?= url('flotilla_vehiculos.php') ?>"
-               class="nav-item <?= str_starts_with($pagina_activa ?? '', 'flotilla_') ? 'nav-item-active' : 'text-zinc-700' ?> flex items-center gap-3 px-4 py-2.5 text-sm font-medium">
+               class="nav-item <?= str_starts_with($pagina_activa, 'flotilla') ? 'nav-item-active' : 'text-zinc-700' ?> flex items-center gap-3 px-4 py-2.5 text-sm font-medium">
                 <i data-lucide="car" class="w-5 h-5 flex-shrink-0 text-zinc-500"></i>
                 <span x-show="sidebarAbierto" x-transition.opacity>Flotilla</span>
             </a>
@@ -1162,22 +1162,21 @@ function busquedaGlobal() {
                     ];
                     $color_icono = $colores_icono[$f['tipo']] ?? 'text-blue-600';
                 ?>
-                <div class="border-l-4 rounded-lg shadow-lg px-4 py-3 flex items-start gap-3 animate-slide-up pointer-events-auto <?= $estilo ?>"
-                     x-data="{ visible: true }"
+                <div x-data="{ visible: true }"
                      x-show="visible"
-                     x-init="setTimeout(() => visible = false, 5000)"
+                     x-init="setTimeout(() => visible = false, 4500)"
                      x-transition:leave="transition ease-in duration-300"
                      x-transition:leave-start="opacity-100 translate-x-0"
-                     x-transition:leave-end="opacity-0 translate-x-4">
-                    <i data-lucide="<?= $icono ?>" class="w-5 h-5 flex-shrink-0 mt-0.5 <?= $color_icono ?>"></i>
-                    <div class="text-sm flex-1 text-zinc-800 font-medium"><?= e($f['mensaje']) ?></div>
-                    <button @click="visible = false" class="text-zinc-400 hover:text-zinc-700 p-0.5">
-                        <i data-lucide="x" class="w-4 h-4"></i>
+                     x-transition:leave-end="opacity-0 translate-x-8"
+                     class="pointer-events-auto flex items-start gap-3 px-4 py-3 rounded-lg border shadow-lg <?= $estilo ?>">
+                    <i data-lucide="<?= $icono ?>" class="w-4 h-4 shrink-0 mt-0.5 <?= $color_icono ?>"></i>
+                    <p class="text-sm leading-snug flex-1"><?= e($f['mensaje']) ?></p>
+                    <button @click="visible = false" class="text-zinc-400 hover:text-zinc-600 ml-1 shrink-0">
+                        <i data-lucide="x" class="w-3.5 h-3.5"></i>
                     </button>
                 </div>
                 <?php endforeach; ?>
             </div>
             <?php endif; ?>
 
-            <!-- Aquí va el contenido de cada página -->
-            <div class="p-4 md:p-6">
+            <div class="p-4 sm:p-6 lg:p-8">

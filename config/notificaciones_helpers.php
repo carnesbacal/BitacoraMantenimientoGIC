@@ -120,13 +120,16 @@ function crear_notificacion(
         }
 
         $sql = "INSERT INTO notificaciones (" . implode(',', $columnas) . ") VALUES (" . implode(',', $valores) . ")";
-        db_exec($sql, $params);
-        $notif_id = (int) db()->lastInsertId();
+        $notif_id = db_exec($sql, $params); // db_exec devuelve lastInsertId
+
+        // ── Despacho externo (email / Telegram) ──────────────────────────────
+        // Si falla no afecta la notif in-app ya guardada.
         try {
             dispatch_notificacion($usuario_id, $tipo, $titulo, $mensaje, $url, $notif_id ?: null);
         } catch (Throwable $de) {
             error_log('dispatch_notificacion fallida: ' . $de->getMessage());
         }
+
         return true;
     } catch (Throwable $e) {
         error_log('crear_notificacion fallida: ' . $e->getMessage());

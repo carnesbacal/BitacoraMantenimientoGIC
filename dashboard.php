@@ -311,7 +311,7 @@ $sla_vencido = (int) db_one(
 if ($sla_vencido > 0) {
     $alertas[] = ['tipo' => 'critica', 'icono' => 'flame',
         'titulo' => "$sla_vencido incidencia(s) con SLA vencido",
-        'mensaje' => 'Pasaron el tiempo de respuesta acordado y siguen abiertas.',
+        'mensaje' => 'Pasaron su fecha límite de SLA y siguen abiertas.',
         'enlace' => url('bitacora.php?sla_vencido=1')];
 }
 
@@ -328,90 +328,93 @@ if ($sin_actualizar > 0) {
         'enlace' => url('bitacora.php?sin_actualizar=1')];
 }
 
-// ── Alertas de Flotilla ───────────────────────────────────────────────────────
-$flot_suc_join  = $sucursal_filtro ? " AND v.sucursal_id = :fsid " : "";
-$flot_suc_param = $sucursal_filtro ? ['fsid' => $sucursal_filtro] : [];
+// ── Alertas de Flotilla ────────────────────────────────────────────────────
+$flotilla_docs_vencidos = (int)(db_one(
+    "SELECT COUNT(*) c FROM flotilla_documentos d
+     LEFT JOIN flotilla_vehiculos v ON d.vehiculo_id = v.id
+     WHERE d.estado = 'vencido'"
+    . ($sucursal_filtro ? " AND v.sucursal_id = {$sucursal_filtro}" : '')
+)['c'] ?? 0);
+if ($flotilla_docs_vencidos > 0) {
+    $alertas[] = ['tipo' => 'critica', 'icono' => 'file-x',
+        'titulo' => "{$flotilla_docs_vencidos} documento(s) de flotilla vencido(s)",
+        'mensaje' => 'Seguros, tenencias o permisos que requieren renovación.',
+        'enlace' => url('flotilla_documentos.php?estado=vencido')];
+}
 
-try {
-    // Documentos vencidos
-    $flot_docs_vencidos = (int) db_one(
-        "SELECT COUNT(*) c FROM flotilla_documentos d
-         LEFT JOIN flotilla_vehiculos v ON v.id = d.vehiculo_id $flot_suc_join
-         WHERE d.estado = 'vencido'",
-        $flot_suc_param
-    )['c'];
-    if ($flot_docs_vencidos > 0) {
-        $alertas[] = ['tipo' => 'critica', 'icono' => 'file-x',
-            'titulo' => "$flot_docs_vencidos documento(s) de flotilla vencido(s)",
-            'mensaje' => 'Tarjeta de circulación, seguro u otros documentos han vencido.',
-            'enlace' => url('flotilla_documentos.php?estado=vencido')];
-    }
+$flotilla_docs_por_vencer = (int)(db_one(
+    "SELECT COUNT(*) c FROM flotilla_documentos d
+     LEFT JOIN flotilla_vehiculos v ON d.vehiculo_id = v.id
+     WHERE d.estado = 'por_vencer'"
+    . ($sucursal_filtro ? " AND v.sucursal_id = {$sucursal_filtro}" : '')
+)['c'] ?? 0);
+if ($flotilla_docs_por_vencer > 0) {
+    $alertas[] = ['tipo' => 'warning', 'icono' => 'file-clock',
+        'titulo' => "{$flotilla_docs_por_vencer} documento(s) de flotilla por vencer",
+        'mensaje' => 'Próximos a vencer según días de alerta configurados.',
+        'enlace' => url('flotilla_documentos.php?estado=por_vencer')];
+}
 
-    // Documentos por vencer (próximos 15 días)
-    $flot_docs_pv = (int) db_one(
-        "SELECT COUNT(*) c FROM flotilla_documentos d
-         LEFT JOIN flotilla_vehiculos v ON v.id = d.vehiculo_id $flot_suc_join
-         WHERE d.estado = 'por_vencer'
-           AND (d.fecha_vence IS NULL OR d.fecha_vence <= DATE_ADD(CURDATE(), INTERVAL 15 DAY))",
-        $flot_suc_param
-    )['c'];
-    if ($flot_docs_pv > 0) {
-        $alertas[] = ['tipo' => 'warning', 'icono' => 'file-clock',
-            'titulo' => "$flot_docs_pv documento(s) de flotilla por vencer",
-            'mensaje' => 'Vencen en los próximos 15 días.',
-            'enlace' => url('flotilla_documentos.php?estado=por_vencer')];
-    }
+$flotilla_multas = db_one(
+    "SELECT COUNT(*) c, COALESCE(SUM(m.monto_original),0) monto
+     FROM flotilla_multas m
+     LEFT JOIN flotilla_vehiculos v ON m.vehiculo_id = v.id
+     WHERE m.estado IN('pendiente','impugnada')"
+    . ($sucursal_filtro ? " AND v.sucursal_id = {$sucursal_filtro}" : '')
+) ?? [];
+if (($flotilla_multas['c'] ?? 0) > 0) {
+    $monto_multas = number_format((float)($flotilla_multas['monto'] ?? 0), 2);
+    $alertas[] = ['tipo' => 'warning', 'icono' => 'ticket-x',
+        'titulo' => "{$flotilla_multas['c']} multa(s) pendiente(s) · \${$monto_multas}",
+        'mensaje' => 'Infracciones sin pagar o en proceso de impugnación.',
+        'enlace' => url('flotilla_multas.php')];
+}
 
-    // Multas sin pagar
-    $flot_multas = db_one(
-        "SELECT COUNT(*) c, COALESCE(SUM(m.monto_original),0) tot
-         FROM flotilla_multas m
-         INNER JOIN flotilla_vehiculos v ON v.id = m.vehiculo_id $flot_suc_join
-         WHERE m.estado = 'pendiente'",
-        $flot_suc_param
-    );
-    if ((int)($flot_multas['c'] ?? 0) > 0) {
-        $alertas[] = ['tipo' => 'warning', 'icono' => 'ticket-x',
-            'titulo' => "{$flot_multas['c']} multa(s) de flotilla sin pagar · \$" . number_format($flot_multas['tot'], 2),
-            'mensaje' => 'Existen infracciones pendientes de liquidación.',
-            'enlace' => url('flotilla_multas.php')];
-    }
+$flotilla_mant_vencidos = (int)(db_one(
+    "SELECT COUNT(*) c FROM flotilla_mant_historial h
+     LEFT JOIN flotilla_vehiculos v ON h.vehiculo_id = v.id
+     WHERE h.proxima_fecha IS NOT NULL AND h.proxima_fecha < CURDATE()"
+    . ($sucursal_filtro ? " AND v.sucursal_id = {$sucursal_filtro}" : '')
+)['c'] ?? 0);
+if ($flotilla_mant_vencidos > 0) {
+    $alertas[] = ['tipo' => 'warning', 'icono' => 'wrench',
+        'titulo' => "{$flotilla_mant_vencidos} mantenimiento(s) de vehículo vencido(s)",
+        'mensaje' => 'Servicios que ya pasaron su fecha programada.',
+        'enlace' => url('flotilla_mantenimiento.php?vista=pendientes')];
+}
 
-    // Mantenimientos vencidos (km_actual >= proximo_km del último historial)
-    $flot_mant_venc = (int) db_one(
-        "SELECT COUNT(DISTINCT h.vehiculo_id) c
-         FROM flotilla_mant_historial h
-         INNER JOIN flotilla_vehiculos v ON v.id = h.vehiculo_id $flot_suc_join
-         INNER JOIN (
-             SELECT vehiculo_id, nombre, MAX(id) last_id
-             FROM flotilla_mant_historial
-             GROUP BY vehiculo_id, nombre
-         ) ul ON ul.last_id = h.id
-         WHERE h.proximo_km IS NOT NULL AND v.km_actual >= h.proximo_km",
-        $flot_suc_param
-    )['c'];
-    if ($flot_mant_venc > 0) {
-        $alertas[] = ['tipo' => 'warning', 'icono' => 'wrench',
-            'titulo' => "$flot_mant_venc vehículo(s) con mantenimiento vencido",
-            'mensaje' => 'Superaron el kilometraje programado para servicio.',
-            'enlace' => url('flotilla_mantenimiento.php?vista=pendientes')];
-    }
+$flotilla_siniestros = (int)(db_one(
+    "SELECT COUNT(*) c FROM flotilla_siniestros s
+     LEFT JOIN flotilla_vehiculos v ON s.vehiculo_id = v.id
+     WHERE s.estado IN('reportado','en_proceso')"
+    . ($sucursal_filtro ? " AND v.sucursal_id = {$sucursal_filtro}" : '')
+)['c'] ?? 0);
+if ($flotilla_siniestros > 0) {
+    $alertas[] = ['tipo' => 'critica', 'icono' => 'shield-alert',
+        'titulo' => "{$flotilla_siniestros} siniestro(s) activo(s) en flotilla",
+        'mensaje' => 'Accidentes o siniestros reportados sin cerrar.',
+        'enlace' => url('flotilla_siniestros.php')];
+}
 
-    // Siniestros sin cerrar
-    $flot_siniestros = (int) db_one(
-        "SELECT COUNT(*) c FROM flotilla_siniestros s
-         INNER JOIN flotilla_vehiculos v ON v.id = s.vehiculo_id $flot_suc_join
-         WHERE s.estado != 'cerrado'",
-        $flot_suc_param
-    )['c'];
-    if ($flot_siniestros > 0) {
-        $alertas[] = ['tipo' => 'critica', 'icono' => 'shield-alert',
-            'titulo' => "$flot_siniestros siniestro(s) de flotilla abierto(s)",
-            'mensaje' => 'Hay siniestros pendientes de resolución.',
-            'enlace' => url('flotilla_siniestros.php')];
+// Odómetro desactualizado (umbral configurable por admin)
+require_once __DIR__ . '/config/flotilla_helpers.php';
+$odo_umbral_dash = flotilla_odometro_umbral();
+if (db_one("SHOW TABLES LIKE 'flotilla_odometro_historial'")) {
+    $odo_vencidos = (int)(db_one(
+        "SELECT COUNT(*) c FROM flotilla_vehiculos v
+         WHERE v.activo = 1 AND v.estado <> 'baja'"
+        . ($sucursal_filtro ? " AND v.sucursal_id = {$sucursal_filtro}" : '') . "
+           AND COALESCE(GREATEST(
+                 COALESCE((SELECT MAX(leido_en) FROM flotilla_odometro_historial WHERE vehiculo_id = v.id), '1970-01-01'),
+                 COALESCE((SELECT MAX(fecha)    FROM flotilla_combustible        WHERE vehiculo_id = v.id AND km_odometro > 0), '1970-01-01')
+               ), '1970-01-01') < DATE_SUB(NOW(), INTERVAL {$odo_umbral_dash} DAY)"
+    )['c'] ?? 0);
+    if ($odo_vencidos > 0) {
+        $alertas[] = ['tipo' => 'warning', 'icono' => 'gauge',
+            'titulo' => "{$odo_vencidos} vehículo(s) con odómetro sin actualizar",
+            'mensaje' => "Sin lectura de odómetro en más de {$odo_umbral_dash} días.",
+            'enlace' => url('flotilla_vehiculos.php')];
     }
-} catch (Throwable $flot_ex) {
-    // Si las tablas de flotilla no existen aún, ignorar silenciosamente
 }
 
 $h = (int) date('G');
@@ -427,9 +430,30 @@ $mes_actual_es = $meses_es[(int) date('n') - 1] . ' ' . date('Y');
     <!-- Encabezado: saludo + filtro de sucursal -->
     <div class="flex flex-col md:flex-row md:items-center md:justify-between gap-4">
         <div>
-            <h2 class="font-display text-3xl font-extrabold text-zinc-900 leading-tight">
-                <?= $saludo ?>, <?= e(explode(' ', $u['nombre'])[0]) ?>
-            </h2>
+            <div class="flex items-center gap-3 flex-wrap">
+                <h2 class="font-display text-3xl font-extrabold text-zinc-900 leading-tight">
+                    <?= $saludo ?>, <?= e(explode(' ', $u['nombre'])[0]) ?>
+                </h2>
+                <?php if ($ver_todas && usuario_prefiere_radio_sucursal()): ?>
+                <form method="GET" class="flex items-center gap-2 flex-wrap bg-white border border-zinc-300 rounded-lg px-3 py-1.5">
+                    <span class="text-xs font-bold text-zinc-500 uppercase tracking-wide">Sucursal:</span>
+                    <label class="flex items-center gap-1 text-sm font-medium text-zinc-700 cursor-pointer">
+                        <input type="radio" name="sucursal" value="" onchange="this.form.submit()"
+                               <?= $sucursal_filtro <= 0 ? 'checked' : '' ?>
+                               class="text-bacal-700 focus:ring-bacal-700">
+                        Todas
+                    </label>
+                    <?php foreach ($sucursales as $s): ?>
+                    <label class="flex items-center gap-1 text-sm font-medium text-zinc-700 cursor-pointer">
+                        <input type="radio" name="sucursal" value="<?= $s['id'] ?>" onchange="this.form.submit()"
+                               <?= $sucursal_filtro == $s['id'] ? 'checked' : '' ?>
+                               class="text-bacal-700 focus:ring-bacal-700">
+                        <?= e($s['nombre']) ?>
+                    </label>
+                    <?php endforeach; ?>
+                </form>
+                <?php endif; ?>
+            </div>
             <p class="text-sm text-zinc-500 mt-1">
                 Resumen del mes en curso ·
                 <span class="font-medium text-zinc-700"><?= e($mes_actual_es) ?></span>
@@ -437,6 +461,7 @@ $mes_actual_es = $meses_es[(int) date('n') - 1] . ' ' . date('Y');
         </div>
 
         <?php if ($ver_todas): ?>
+        <?php if (!usuario_prefiere_radio_sucursal()): ?>
         <form method="GET" class="flex items-center gap-2">
             <div class="relative">
                 <i data-lucide="store" class="w-4 h-4 absolute left-3 top-1/2 -translate-y-1/2 text-zinc-400"></i>
@@ -452,6 +477,7 @@ $mes_actual_es = $meses_es[(int) date('n') - 1] . ' ' . date('Y');
                 <i data-lucide="chevron-down" class="w-4 h-4 absolute right-3 top-1/2 -translate-y-1/2 text-zinc-400 pointer-events-none"></i>
             </div>
         </form>
+        <?php endif; ?>
         <?php endif; ?>
     </div>
 

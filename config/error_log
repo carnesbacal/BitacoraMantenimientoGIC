@@ -1,8 +1,0 @@
-[10-Jun-2026 00:41:14 UTC] PHP Fatal error:  Uncaught Error: Call to undefined function url() in /home/granodeo/mantenimiento.granodeoro.com.mx/config/footer.php:232
-Stack trace:
-#0 {main}
-  thrown in /home/granodeo/mantenimiento.granodeoro.com.mx/config/footer.php on line 232
-[10-Jun-2026 00:41:45 UTC] PHP Fatal error:  Uncaught Error: Call to undefined function url() in /home/granodeo/mantenimiento.granodeoro.com.mx/config/footer.php:232
-Stack trace:
-#0 {main}
-  thrown in /home/granodeo/mantenimiento.granodeoro.com.mx/config/footer.php on line 232

@@ -36,15 +36,36 @@ require_once __DIR__ . '/config/header.php';
     <!-- Header -->
     <div class="flex items-center justify-between flex-wrap gap-3">
         <div>
-            <h2 class="font-display text-2xl font-extrabold text-zinc-900 flex items-center gap-2">
-                <i data-lucide="warehouse" class="w-6 h-6 text-bacal-700"></i>
-                Dashboard del almacén
-            </h2>
+            <div class="flex items-center gap-3 flex-wrap">
+                <h2 class="font-display text-2xl font-extrabold text-zinc-900 flex items-center gap-2">
+                    <i data-lucide="warehouse" class="w-6 h-6 text-bacal-700"></i>
+                    Dashboard del almacén
+                </h2>
+                <?php if (tiene_permiso('ver_todas_sucursales') && count($sucursales) > 1 && usuario_prefiere_radio_sucursal()): ?>
+                <form method="GET" class="flex items-center gap-2 flex-wrap bg-white border border-zinc-300 rounded-lg px-3 py-1.5">
+                    <span class="text-xs font-bold text-zinc-500 uppercase tracking-wide">Sucursal:</span>
+                    <label class="flex items-center gap-1 text-sm font-medium text-zinc-700 cursor-pointer">
+                        <input type="radio" name="sucursal_id" value="0" onchange="this.form.submit()"
+                               <?= $f_sucursal === 0 ? 'checked' : '' ?>
+                               class="text-bacal-700 focus:ring-bacal-700">
+                        Todas
+                    </label>
+                    <?php foreach ($sucursales as $s): ?>
+                    <label class="flex items-center gap-1 text-sm font-medium text-zinc-700 cursor-pointer">
+                        <input type="radio" name="sucursal_id" value="<?= $s['id'] ?>" onchange="this.form.submit()"
+                               <?= $f_sucursal === (int) $s['id'] ? 'checked' : '' ?>
+                               class="text-bacal-700 focus:ring-bacal-700">
+                        <?= e($s['nombre']) ?>
+                    </label>
+                    <?php endforeach; ?>
+                </form>
+                <?php endif; ?>
+            </div>
             <p class="text-xs text-zinc-500 mt-0.5">Vista general de stock, alertas y movimientos.</p>
         </div>
 
         <div class="flex items-center gap-2">
-            <?php if (tiene_permiso('ver_todas_sucursales') && count($sucursales) > 1): ?>
+            <?php if (tiene_permiso('ver_todas_sucursales') && count($sucursales) > 1 && !usuario_prefiere_radio_sucursal()): ?>
             <form method="GET">
                 <select name="sucursal_id" onchange="this.form.submit()"
                         class="px-3 py-2 rounded-lg border border-zinc-300 bg-white text-sm font-semibold">

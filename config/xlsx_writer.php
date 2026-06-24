@@ -1,154 +1,122 @@
 <?php
 /**
  * config/xlsx_writer.php
- * Clase XlsxWriter — genera archivos .xlsx sin dependencias externas.
- * Requiere la extensión ZipArchive (incluida en PHP/XAMPP/cPanel).
+ * Escritor XLSX minimal sin dependencias externas.
+ * Usa ZipArchive (incluido en PHP/XAMPP) para generar archivos .xlsx válidos.
  *
- * Estilos predefinidos:
- *   0 = normal
- *   1 = header gris
- *   2 = número (2 decimales)
- *   3 = moneda ($)
- *   4 = fecha
- *   5 = header oscuro
+ * Uso básico:
+ *   $xlsx = new XlsxWriter();
+ *   $xlsx->addSheet('Hoja 1');
+ *   $xlsx->addRow(['Columna A', 'Columna B']);
+ *   $xlsx->addRow(['dato 1', 123.45]);
+ *   $xlsx->download('archivo.xlsx');
  */
 class XlsxWriter
 {
-    private array $sheets      = [];   // [name => rows[]]
-    private array $sheetCols   = [];   // [name => [maxWidth[]]]
-    private string $currentSheet = '';
+    private array $sheets     = [];
+    private int   $sheetIndex = 0;
+    private array $sharedStrings = [];
+    private array $ssMap       = [];
 
-    // ── API pública ───────────────────────────────────────────────────────────
+    // Estilos predefinidos (índices fijos)
+    // 0 = normal, 1 = header (negrita, fondo gris), 2 = número, 3 = moneda, 4 = fecha, 5 = header_dark
+    private const STYLE_NORMAL      = 0;
+    private const STYLE_HEADER      = 1;
+    private const STYLE_NUMBER      = 2;
+    private const STYLE_CURRENCY    = 3;
+    private const STYLE_DATE        = 4;
+    private const STYLE_HEADER_DARK = 5;
 
     public function addSheet(string $name): void
     {
-        $this->sheets[$name]    = [];
-        $this->sheetCols[$name] = [];
-        $this->currentSheet     = $name;
+        $this->sheets[] = [
+            'name' => $name,
+            'rows' => [],
+        ];
+        $this->sheetIndex = count($this->sheets) - 1;
     }
 
-    /** Agrega una fila con estilo por celda o uno global. */
+    /**
+     * Agrega una fila a la hoja activa.
+     * $row = array de valores: string, int, float, o ['v'=>value,'s'=>style_index]
+     * $style = estilo global de la fila (0=normal,1=header,5=header_dark)
+     */
     public function addRow(array $row, int $rowStyle = 0): void
     {
-        $this->appendRow($row, $rowStyle);
+        if (empty($this->sheets)) $this->addSheet('Hoja 1');
+        $this->sheets[$this->sheetIndex]['rows'][] = ['cells' => $row, 'style' => $rowStyle];
     }
 
-    public function addHeaderRow(array $row, bool $dark = false): void
-    {
-        $this->appendRow($row, $dark ? 5 : 1);
-    }
-
+    /** Fila vacía separadora */
     public function addBlankRow(): void
     {
-        $this->sheets[$this->currentSheet][] = [];
+        $this->addRow([]);
     }
+
+    /** Fila de encabezado (negrita, fondo gris) */
+    public function addHeaderRow(array $row, bool $dark = false): void
+    {
+        $this->addRow($row, $dark ? self::STYLE_HEADER_DARK : self::STYLE_HEADER);
+    }
+
+    // -------------------------------------------------------------------------
+    // Salida
+    // -------------------------------------------------------------------------
 
     public function download(string $filename): void
     {
-        $zip = $this->buildZip();
+        $data = $this->build();
         header('Content-Type: application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');
         header('Content-Disposition: attachment; filename="' . addslashes($filename) . '"');
+        header('Content-Length: ' . strlen($data));
         header('Cache-Control: max-age=0');
-        echo $zip;
+        echo $data;
         exit;
     }
 
     public function save(string $path): void
     {
-        file_put_contents($path, $this->buildZip());
+        file_put_contents($path, $this->build());
     }
 
-    // ── Internos ──────────────────────────────────────────────────────────────
+    // -------------------------------------------------------------------------
+    // Construcción interna
+    // -------------------------------------------------------------------------
 
-    private function appendRow(array $row, int $style): void
+    private function build(): string
     {
-        $s = $this->currentSheet;
-        if ($s === '') return;
-        $this->sheets[$s][] = ['cells' => $row, 'style' => $style];
-        // Actualizar anchos de columna
-        foreach ($row as $ci => $val) {
-            $len = mb_strlen((string) $val) + 2;
-            if (!isset($this->sheetCols[$s][$ci]) || $this->sheetCols[$s][$ci] < $len) {
-                $this->sheetCols[$s][$ci] = min($len, 60);
+        // Reiniciar shared strings
+        $this->sharedStrings = [];
+        $this->ssMap         = [];
+
+        // Pre-procesar para recolectar shared strings
+        foreach ($this->sheets as &$sheet) {
+            foreach ($sheet['rows'] as &$row) {
+                foreach ($row['cells'] as &$cell) {
+                    $val = is_array($cell) ? $cell['v'] : $cell;
+                    if (is_string($val) && $val !== '') {
+                        $idx = $this->addSharedString($val);
+                        if (is_array($cell)) $cell['ss'] = $idx;
+                        else $cell = ['v' => $val, 'ss' => $idx];
+                    }
+                }
             }
         }
-    }
 
-    private function buildZip(): string
-    {
         $tmp = tempnam(sys_get_temp_dir(), 'xlsx_');
         $zip = new ZipArchive();
         $zip->open($tmp, ZipArchive::OVERWRITE);
 
-        $sheetNames = array_keys($this->sheets);
-        $sheetCount = count($sheetNames);
+        $zip->addFromString('[Content_Types].xml',      $this->contentTypes());
+        $zip->addFromString('_rels/.rels',              $this->rootRels());
+        $zip->addFromString('xl/workbook.xml',          $this->workbook());
+        $zip->addFromString('xl/_rels/workbook.xml.rels', $this->workbookRels());
+        $zip->addFromString('xl/styles.xml',            $this->styles());
+        $zip->addFromString('xl/sharedStrings.xml',     $this->sharedStringsXml());
 
-        // [Content_Types].xml
-        $ct = '<?xml version="1.0" encoding="UTF-8" standalone="yes"?>'
-            . '<Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types">'
-            . '<Default Extension="rels" ContentType="application/vnd.openxmlformats-package.relationships+xml"/>'
-            . '<Default Extension="xml"  ContentType="application/xml"/>'
-            . '<Override PartName="/xl/workbook.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet.main+xml"/>'
-            . '<Override PartName="/xl/styles.xml"   ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.styles+xml"/>'
-            . '<Override PartName="/xl/sharedStrings.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.sharedStrings+xml"/>';
-        for ($i = 1; $i <= $sheetCount; $i++) {
-            $ct .= '<Override PartName="/xl/worksheets/sheet' . $i . '.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.worksheet+xml"/>';
+        foreach ($this->sheets as $i => $sheet) {
+            $zip->addFromString("xl/worksheets/sheet{$i}.xml", $this->sheetXml($sheet));
         }
-        $ct .= '</Types>';
-        $zip->addFromString('[Content_Types].xml', $ct);
-
-        // _rels/.rels
-        $zip->addFromString('_rels/.rels',
-            '<?xml version="1.0" encoding="UTF-8" standalone="yes"?>'
-            . '<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">'
-            . '<Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/officeDocument" Target="xl/workbook.xml"/>'
-            . '</Relationships>');
-
-        // xl/_rels/workbook.xml.rels
-        $wbRels = '<?xml version="1.0" encoding="UTF-8" standalone="yes"?>'
-                . '<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">'
-                . '<Relationship Id="rIdS" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/sharedStrings" Target="sharedStrings.xml"/>'
-                . '<Relationship Id="rIdSt" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/styles" Target="styles.xml"/>';
-        for ($i = 1; $i <= $sheetCount; $i++) {
-            $wbRels .= '<Relationship Id="rId' . $i . '" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/worksheet" Target="worksheets/sheet' . $i . '.xml"/>';
-        }
-        $wbRels .= '</Relationships>';
-        $zip->addFromString('xl/_rels/workbook.xml.rels', $wbRels);
-
-        // xl/workbook.xml
-        $wb = '<?xml version="1.0" encoding="UTF-8" standalone="yes"?>'
-            . '<workbook xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main"'
-            . ' xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships">'
-            . '<sheets>';
-        for ($i = 0; $i < $sheetCount; $i++) {
-            $sName = $this->xmlEscape($sheetNames[$i]);
-            $wb .= '<sheet name="' . $sName . '" sheetId="' . ($i + 1) . '" r:id="rId' . ($i + 1) . '"/>';
-        }
-        $wb .= '</sheets></workbook>';
-        $zip->addFromString('xl/workbook.xml', $wb);
-
-        // xl/styles.xml
-        $zip->addFromString('xl/styles.xml', $this->buildStyles());
-
-        // Shared strings
-        $ssIndex = [];
-        $ssArr   = [];
-
-        // xl/worksheets/sheetN.xml
-        for ($i = 0; $i < $sheetCount; $i++) {
-            $name = $sheetNames[$i];
-            $xml  = $this->buildSheet($name, $ssIndex, $ssArr);
-            $zip->addFromString('xl/worksheets/sheet' . ($i + 1) . '.xml', $xml);
-        }
-
-        // xl/sharedStrings.xml
-        $ssXml = '<?xml version="1.0" encoding="UTF-8" standalone="yes"?>'
-               . '<sst xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main" count="' . count($ssArr) . '" uniqueCount="' . count($ssArr) . '">';
-        foreach ($ssArr as $s) {
-            $ssXml .= '<si><t xml:space="preserve">' . $this->xmlEscape($s) . '</t></si>';
-        }
-        $ssXml .= '</sst>';
-        $zip->addFromString('xl/sharedStrings.xml', $ssXml);
 
         $zip->close();
         $data = file_get_contents($tmp);
@@ -156,108 +124,203 @@ class XlsxWriter
         return $data;
     }
 
-    private function buildSheet(string $name, array &$ssIndex, array &$ssArr): string
+    private function addSharedString(string $s): int
     {
-        $rows    = $this->sheets[$name];
-        $colWidths = $this->sheetCols[$name];
+        if (isset($this->ssMap[$s])) return $this->ssMap[$s];
+        $idx = count($this->sharedStrings);
+        $this->sharedStrings[] = $s;
+        $this->ssMap[$s] = $idx;
+        return $idx;
+    }
 
-        $xml = '<?xml version="1.0" encoding="UTF-8" standalone="yes"?>'
-             . '<worksheet xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main">';
+    private function colLetter(int $col): string
+    {
+        $letter = '';
+        $col++;
+        while ($col > 0) {
+            $col--;
+            $letter = chr(65 + ($col % 26)) . $letter;
+            $col    = intdiv($col, 26);
+        }
+        return $letter;
+    }
 
-        // Column widths
-        if (!empty($colWidths)) {
-            $xml .= '<cols>';
-            foreach ($colWidths as $ci => $w) {
-                $xml .= '<col min="' . ($ci + 1) . '" max="' . ($ci + 1) . '" width="' . $w . '" customWidth="1"/>';
+    private function sheetXml(array $sheet): string
+    {
+        // Calcular anchos de columna (máx de cada columna)
+        $colWidths = [];
+        foreach ($sheet['rows'] as $row) {
+            foreach ($row['cells'] as $ci => $cell) {
+                $val = is_array($cell) ? $cell['v'] : $cell;
+                $len = mb_strlen((string)$val);
+                $colWidths[$ci] = max($colWidths[$ci] ?? 8, min($len + 2, 60));
             }
-            $xml .= '</cols>';
         }
 
-        $xml .= '<sheetData>';
-        foreach ($rows as $ri => $row) {
-            if (empty($row)) { continue; } // blank rows skip
-            $rowNum = $ri + 1;
-            $xml .= '<row r="' . $rowNum . '">';
-            $cells  = $row['cells'] ?? [];
-            $rStyle = $row['style'] ?? 0;
-            foreach ($cells as $ci => $val) {
-                $col   = $this->colLetter($ci);
-                $addr  = $col . $rowNum;
-                $style = $rStyle;
+        $colsXml = '<cols>';
+        foreach ($colWidths as $ci => $w) {
+            $n = $ci + 1;
+            $colsXml .= "<col min=\"{$n}\" max=\"{$n}\" width=\"{$w}\" customWidth=\"1\"/>";
+        }
+        $colsXml .= '</cols>';
 
-                if (is_null($val) || $val === '') {
-                    $xml .= '<c r="' . $addr . '" s="' . $style . '"/>';
-                } elseif (is_numeric($val) && !in_array($style, [1, 5])) {
-                    // Número
-                    $fStyle = ($style === 0) ? 2 : $style;
-                    $xml .= '<c r="' . $addr . '" t="n" s="' . $fStyle . '"><v>' . $val . '</v></c>';
+        $rowsXml = '';
+        foreach ($sheet['rows'] as $ri => $row) {
+            $rn  = $ri + 1;
+            $ht  = ($row['style'] > 0) ? ' ht="18" customHeight="1"' : '';
+            $rowsXml .= "<row r=\"{$rn}\"{$ht}>";
+            foreach ($row['cells'] as $ci => $cell) {
+                $col    = $this->colLetter($ci);
+                $ref    = "{$col}{$rn}";
+                $val    = is_array($cell) ? ($cell['v'] ?? '') : $cell;
+                $style  = $row['style'];
+                if (is_array($cell) && isset($cell['s'])) $style = $cell['s'];
+
+                if (is_array($cell) && isset($cell['ss'])) {
+                    // Shared string
+                    $rowsXml .= "<c r=\"{$ref}\" t=\"s\" s=\"{$style}\"><v>{$cell['ss']}</v></c>";
+                } elseif (is_float($val) || (is_numeric($val) && !is_string($val) && $val !== '')) {
+                    $rowsXml .= "<c r=\"{$ref}\" s=\"{$style}\"><v>" . (float)$val . "</v></c>";
+                } elseif (is_int($val)) {
+                    $rowsXml .= "<c r=\"{$ref}\" s=\"{$style}\"><v>{$val}</v></c>";
                 } else {
-                    // Cadena compartida
-                    $sval = (string) $val;
-                    if (!isset($ssIndex[$sval])) {
-                        $ssIndex[$sval] = count($ssArr);
-                        $ssArr[]        = $sval;
-                    }
-                    $xml .= '<c r="' . $addr . '" t="s" s="' . $style . '"><v>' . $ssIndex[$sval] . '</v></c>';
+                    // Vacío
+                    $rowsXml .= "<c r=\"{$ref}\" s=\"{$style}\"/>";
                 }
             }
-            $xml .= '</row>';
+            $rowsXml .= '</row>';
         }
-        $xml .= '</sheetData></worksheet>';
-        return $xml;
+
+        return '<?xml version="1.0" encoding="UTF-8" standalone="yes"?>'
+            . '<worksheet xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main">'
+            . $colsXml
+            . '<sheetData>' . $rowsXml . '</sheetData>'
+            . '</worksheet>';
     }
 
-    private function buildStyles(): string
+    private function contentTypes(): string
+    {
+        $sheets = '';
+        foreach ($this->sheets as $i => $_) {
+            $sheets .= "<Override PartName=\"/xl/worksheets/sheet{$i}.xml\" "
+                . 'ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.worksheet+xml"/>';
+        }
+        return '<?xml version="1.0" encoding="UTF-8" standalone="yes"?>'
+            . '<Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types">'
+            . '<Default Extension="rels" ContentType="application/vnd.openxmlformats-package.relationships+xml"/>'
+            . '<Default Extension="xml"  ContentType="application/xml"/>'
+            . '<Override PartName="/xl/workbook.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet.main+xml"/>'
+            . '<Override PartName="/xl/styles.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.styles+xml"/>'
+            . '<Override PartName="/xl/sharedStrings.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.sharedStrings+xml"/>'
+            . $sheets
+            . '</Types>';
+    }
+
+    private function rootRels(): string
     {
         return '<?xml version="1.0" encoding="UTF-8" standalone="yes"?>'
-             . '<styleSheet xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main">'
-             . '<fonts count="3">'
-             . '<font><sz val="11"/><name val="Calibri"/></font>'                               // 0 normal
-             . '<font><sz val="11"/><b/><name val="Calibri"/></font>'                           // 1 bold
-             . '<font><sz val="11"/><b/><color rgb="FFFFFFFF"/><name val="Calibri"/></font>'    // 2 white bold
-             . '</fonts>'
-             . '<fills count="4">'
-             . '<fill><patternFill patternType="none"/></fill>'
-             . '<fill><patternFill patternType="gray125"/></fill>'
-             . '<fill><patternFill patternType="solid"><fgColor rgb="FFE5E7EB"/></patternFill></fill>' // gris claro (header)
-             . '<fill><patternFill patternType="solid"><fgColor rgb="FF1F2937"/></patternFill></fill>' // gris oscuro
-             . '</fills>'
-             . '<borders count="2">'
-             . '<border><left/><right/><top/><bottom/><diagonal/></border>'
-             . '<border><left style="thin"><color auto="1"/></left><right style="thin"><color auto="1"/></right><top style="thin"><color auto="1"/></top><bottom style="thin"><color auto="1"/></bottom><diagonal/></border>'
-             . '</borders>'
-             . '<cellStyleXfs count="1"><xf numFmtId="0" fontId="0" fillId="0" borderId="0"/></cellStyleXfs>'
-             . '<cellXfs count="6">'
-             // 0: normal
-             . '<xf numFmtId="0"  fontId="0" fillId="0" borderId="1" xfId="0" applyFont="1" applyFill="1" applyBorder="1"/>'
-             // 1: header gris
-             . '<xf numFmtId="0"  fontId="1" fillId="2" borderId="1" xfId="0" applyFont="1" applyFill="1" applyBorder="1"/>'
-             // 2: número
-             . '<xf numFmtId="2"  fontId="0" fillId="0" borderId="1" xfId="0" applyFont="1" applyFill="1" applyBorder="1" applyNumberFormat="1"/>'
-             // 3: moneda
-             . '<xf numFmtId="44" fontId="0" fillId="0" borderId="1" xfId="0" applyFont="1" applyFill="1" applyBorder="1" applyNumberFormat="1"/>'
-             // 4: fecha
-             . '<xf numFmtId="14" fontId="0" fillId="0" borderId="1" xfId="0" applyFont="1" applyFill="1" applyBorder="1" applyNumberFormat="1"/>'
-             // 5: header oscuro
-             . '<xf numFmtId="0"  fontId="2" fillId="3" borderId="1" xfId="0" applyFont="1" applyFill="1" applyBorder="1"/>'
-             . '</cellXfs>'
-             . '</styleSheet>';
+            . '<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">'
+            . '<Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/officeDocument" Target="xl/workbook.xml"/>'
+            . '</Relationships>';
     }
 
-    private function colLetter(int $index): string
+    private function workbook(): string
     {
-        $letters = '';
-        $index++;
-        while ($index > 0) {
-            $mod     = ($index - 1) % 26;
-            $letters = chr(65 + $mod) . $letters;
-            $index   = intdiv($index - $mod, 26);
+        $sheetsXml = '';
+        foreach ($this->sheets as $i => $sheet) {
+            $n = $i + 1;
+            $name = htmlspecialchars($sheet['name'], ENT_XML1);
+            $sheetsXml .= "<sheet name=\"{$name}\" sheetId=\"{$n}\" r:id=\"rId{$n}\"/>";
         }
-        return $letters;
+        return '<?xml version="1.0" encoding="UTF-8" standalone="yes"?>'
+            . '<workbook xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main" '
+            . 'xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships">'
+            . '<sheets>' . $sheetsXml . '</sheets>'
+            . '</workbook>';
     }
 
-    private function xmlEscape(string $s): string
+    private function workbookRels(): string
     {
-        return str_replace(['&','<','>','"',"'"], ['&amp;','&lt;','&gt;','&quot;','&apos;'], $s);
+        $rels = '';
+        foreach ($this->sheets as $i => $_) {
+            $n = $i + 1;
+            $rels .= "<Relationship Id=\"rId{$n}\" "
+                . 'Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/worksheet" '
+                . "Target=\"worksheets/sheet{$i}.xml\"/>";
+        }
+        $rels .= '<Relationship Id="rId' . (count($this->sheets) + 1) . '" '
+            . 'Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/styles" '
+            . 'Target="styles.xml"/>';
+        $rels .= '<Relationship Id="rId' . (count($this->sheets) + 2) . '" '
+            . 'Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/sharedStrings" '
+            . 'Target="sharedStrings.xml"/>';
+        return '<?xml version="1.0" encoding="UTF-8" standalone="yes"?>'
+            . '<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">'
+            . $rels
+            . '</Relationships>';
+    }
+
+    private function styles(): string
+    {
+        // Estilos:
+        // xf 0 = normal
+        // xf 1 = header (bold, bg gris claro)
+        // xf 2 = número entero
+        // xf 3 = moneda 2 dec
+        // xf 4 = fecha
+        // xf 5 = header dark (bold, bg oscuro, texto blanco)
+        return '<?xml version="1.0" encoding="UTF-8" standalone="yes"?>'
+            . '<styleSheet xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main">'
+            . '<numFmts count="2">'
+            . '<numFmt numFmtId="164" formatCode="#,##0.00"/>'
+            . '<numFmt numFmtId="165" formatCode="DD/MM/YYYY"/>'
+            . '</numFmts>'
+            . '<fonts count="3">'
+            . '<font><sz val="11"/><name val="Calibri"/></font>'
+            . '<font><b/><sz val="11"/><name val="Calibri"/></font>'
+            . '<font><b/><sz val="11"/><color rgb="FFFFFFFF"/><name val="Calibri"/></font>'
+            . '</fonts>'
+            . '<fills count="4">'
+            . '<fill><patternFill patternType="none"/></fill>'
+            . '<fill><patternFill patternType="gray125"/></fill>'
+            . '<fill><patternFill patternType="solid"><fgColor rgb="FFE5E7EB"/></patternFill></fill>'
+            . '<fill><patternFill patternType="solid"><fgColor rgb="FF374151"/></patternFill></fill>'
+            . '</fills>'
+            . '<borders count="2">'
+            . '<border><left/><right/><top/><bottom/><diagonal/></border>'
+            . '<border><left style="thin"><color auto="1"/></left>'
+            . '<right style="thin"><color auto="1"/></right>'
+            . '<top style="thin"><color auto="1"/></top>'
+            . '<bottom style="thin"><color auto="1"/></bottom>'
+            . '<diagonal/></border>'
+            . '</borders>'
+            . '<cellStyleXfs count="1"><xf numFmtId="0" fontId="0" fillId="0" borderId="0"/></cellStyleXfs>'
+            . '<cellXfs count="6">'
+            // 0: normal
+            . '<xf numFmtId="0"   fontId="0" fillId="0" borderId="1" xfId="0" applyBorder="1"/>'
+            // 1: header gris
+            . '<xf numFmtId="0"   fontId="1" fillId="2" borderId="1" xfId="0" applyFont="1" applyFill="1" applyBorder="1"/>'
+            // 2: número entero
+            . '<xf numFmtId="3"   fontId="0" fillId="0" borderId="1" xfId="0" applyBorder="1" applyNumberFormat="1"/>'
+            // 3: moneda
+            . '<xf numFmtId="164" fontId="0" fillId="0" borderId="1" xfId="0" applyBorder="1" applyNumberFormat="1"/>'
+            // 4: fecha
+            . '<xf numFmtId="165" fontId="0" fillId="0" borderId="1" xfId="0" applyBorder="1" applyNumberFormat="1"/>'
+            // 5: header dark
+            . '<xf numFmtId="0"   fontId="2" fillId="3" borderId="1" xfId="0" applyFont="1" applyFill="1" applyBorder="1"/>'
+            . '</cellXfs>'
+            . '</styleSheet>';
+    }
+
+    private function sharedStringsXml(): string
+    {
+        $count = count($this->sharedStrings);
+        $xml   = "<?xml version=\"1.0\" encoding=\"UTF-8\" standalone=\"yes\"?>"
+            . "<sst xmlns=\"http://schemas.openxmlformats.org/spreadsheetml/2006/main\" count=\"{$count}\" uniqueCount=\"{$count}\">";
+        foreach ($this->sharedStrings as $s) {
+            $xml .= '<si><t xml:space="preserve">' . htmlspecialchars($s, ENT_XML1 | ENT_QUOTES) . '</t></si>';
+        }
+        $xml .= '</sst>';
+        return $xml;
     }
 }
