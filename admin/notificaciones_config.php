@@ -48,41 +48,46 @@ if (es_post()) {
                 $errores[] = 'Para activar Telegram debes ingresar el token del bot.';
             }
 
-            // Si la contraseña enviada está vacía, conservar la existente
-            $pass_sql = '';
-            $params_extra = [];
-            if ($smtp_password !== '') {
-                $pass_sql = ', smtp_password = :smtp_pass';
-                $params_extra['smtp_pass'] = $smtp_password;
-            }
-
             if (empty($errores)) {
+                // Determinar contraseña a usar (nueva o conservar la existente)
+                $pass_valor = ($smtp_password !== '')
+                    ? $smtp_password
+                    : (db_one("SELECT smtp_password FROM configuracion_notificaciones WHERE id = 1")['smtp_password'] ?? null);
+
                 db_exec(
-                    "UPDATE configuracion_notificaciones SET
-                        smtp_host        = :smtp_host,
-                        smtp_port        = :smtp_port,
-                        smtp_seguridad   = :smtp_seg,
-                        smtp_usuario     = :smtp_user,
-                        smtp_from_email  = :smtp_from,
-                        smtp_from_nombre = :smtp_nombre,
-                        smtp_activo      = :smtp_act,
-                        telegram_bot_token = :tg_token,
-                        telegram_activo  = :tg_act,
-                        actualizado_por  = :uid
-                        {$pass_sql}
-                     WHERE id = 1",
-                    array_merge([
+                    "INSERT INTO configuracion_notificaciones
+                        (id, smtp_host, smtp_port, smtp_seguridad, smtp_usuario, smtp_password,
+                         smtp_from_email, smtp_from_nombre, smtp_activo,
+                         telegram_bot_token, telegram_activo, actualizado_por)
+                     VALUES
+                        (1, :smtp_host, :smtp_port, :smtp_seg, :smtp_user, :smtp_pass,
+                         :smtp_from, :smtp_nombre, :smtp_act,
+                         :tg_token, :tg_act, :uid)
+                     ON DUPLICATE KEY UPDATE
+                        smtp_host        = VALUES(smtp_host),
+                        smtp_port        = VALUES(smtp_port),
+                        smtp_seguridad   = VALUES(smtp_seguridad),
+                        smtp_usuario     = VALUES(smtp_usuario),
+                        smtp_password    = VALUES(smtp_password),
+                        smtp_from_email  = VALUES(smtp_from_email),
+                        smtp_from_nombre = VALUES(smtp_from_nombre),
+                        smtp_activo      = VALUES(smtp_activo),
+                        telegram_bot_token = VALUES(telegram_bot_token),
+                        telegram_activo  = VALUES(telegram_activo),
+                        actualizado_por  = VALUES(actualizado_por)",
+                    [
                         'smtp_host'   => $smtp_host   ?: null,
                         'smtp_port'   => $smtp_port,
                         'smtp_seg'    => $smtp_seguridad,
                         'smtp_user'   => $smtp_usuario ?: null,
+                        'smtp_pass'   => $pass_valor,
                         'smtp_from'   => $smtp_from_email ?: null,
                         'smtp_nombre' => $smtp_from_nombre ?: 'Bitácora Mantenimiento',
                         'smtp_act'    => $smtp_activo,
                         'tg_token'    => $telegram_token ?: null,
                         'tg_act'      => $telegram_activo,
                         'uid'         => (int) $u['id'],
-                    ], $params_extra)
+                    ]
                 );
                 flash_set('ok', 'Configuración guardada correctamente.');
                 header('Location: ' . url('admin/notificaciones_config.php'));
