@@ -9,7 +9,7 @@
  */
 
 define('APP_NAME',    'GIC · Mantenimiento');
-define('APP_VERSION', '2.0.9');
+define('APP_VERSION', '2.0.15');
 
 $_protocolo = (!empty($_SERVER['HTTPS']) && $_SERVER['HTTPS'] !== 'off') ? 'https' : 'http';
 $_host = $_SERVER['HTTP_HOST'] ?? 'localhost';
