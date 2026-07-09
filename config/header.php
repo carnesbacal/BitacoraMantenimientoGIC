@@ -38,7 +38,11 @@ try {
     $notif_count = 0;
 }
 ?><!DOCTYPE html>
-<html lang="es" class="h-full">
+<html lang="es" class="h-full"<?php
+    $__escala = (int) ($_SESSION['usuario']['escala_interfaz'] ?? 100);
+    if (!in_array($__escala, [90, 100, 110, 125], true)) $__escala = 100;
+    if ($__escala !== 100) echo ' style="font-size: ' . $__escala . '%"';
+?>>
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
@@ -699,12 +703,15 @@ function busquedaGlobal() {
         <!-- Logo / Marca -->
         <div class="h-16 flex items-center border-b border-zinc-200 px-4 flex-shrink-0">
             <a href="<?= url('dashboard.php') ?>" class="flex items-center gap-2.5 overflow-hidden">
-                <div class="w-9 h-9 flex-shrink-0 rounded-lg bg-bacal-700 flex items-center justify-center text-white font-display font-bold text-[10px] tracking-tight shadow-sm">
-                    GIC
+                <div class="w-9 h-9 flex-shrink-0 rounded-lg bg-bacal-700 flex items-center justify-center text-white font-display font-bold text-lg shadow-sm">
+                    B
                 </div>
                 <div x-show="sidebarAbierto" x-transition.opacity class="overflow-hidden">
                     <div class="font-display font-extrabold text-bacal-700 text-sm leading-tight tracking-wide">SIGMA</div>
-                    <div class="font-display font-bold text-zinc-800 dark:text-white text-xs leading-tight mt-0.5">GRUPO INDUSTRIAL CORRAL</div>
+                    <img src="<?= url('assets/img/logo-negro.png') ?>" alt="Carnes Bacal" onerror="this.style.display='none'"
+                         class="h-5 w-auto block dark:hidden mt-0.5">
+                    <img src="<?= url('assets/img/logo-blanco.png') ?>" alt="Carnes Bacal" onerror="this.style.display='none'"
+                         class="h-5 w-auto hidden dark:block mt-0.5">
                 </div>
             </a>
         </div>
