@@ -704,14 +704,13 @@ function busquedaGlobal() {
         <div class="h-16 flex items-center border-b border-zinc-200 px-4 flex-shrink-0">
             <a href="<?= url('dashboard.php') ?>" class="flex items-center gap-2.5 overflow-hidden">
                 <div class="w-9 h-9 flex-shrink-0 rounded-lg bg-bacal-700 flex items-center justify-center text-white font-display font-bold text-lg shadow-sm">
-                    B
+                    GIC
                 </div>
                 <div x-show="sidebarAbierto" x-transition.opacity class="overflow-hidden">
                     <div class="font-display font-extrabold text-bacal-700 text-sm leading-tight tracking-wide">SIGMA</div>
-                    <img src="<?= url('assets/img/logo-negro.png') ?>" alt="Carnes Bacal" onerror="this.style.display='none'"
-                         class="h-5 w-auto block dark:hidden mt-0.5">
-                    <img src="<?= url('assets/img/logo-blanco.png') ?>" alt="Carnes Bacal" onerror="this.style.display='none'"
-                         class="h-5 w-auto hidden dark:block mt-0.5">
+                    <div class="font-display font-bold text-zinc-800 dark:text-zinc-100 text-[11px] leading-tight tracking-wide mt-0.5 whitespace-nowrap">
+                    GRUPO INDUSTRIAL CORRAL
+                    </div>
                 </div>
             </a>
         </div>
