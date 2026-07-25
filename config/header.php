@@ -129,6 +129,18 @@ try {
         .font-display { font-family: 'Bricolage Grotesque', sans-serif; letter-spacing: -0.02em; }
 
         /* ===================================================================
+           LEGIBILIDAD - Gris tenue más oscuro (modo claro)
+           Sube el contraste de los textos secundarios pequeños en TODA la app
+           (montos bajo los totales, subtítulos, notas, etc.).
+           Para hacerlo más o menos oscuro, cambia SOLO --texto-tenue:
+             #52525b = gris oscuro legible (por defecto)
+             #3f3f46 = casi negro   ·   #71717a = intermedio
+           En modo oscuro no aplica: los overrides html.dark tienen prioridad.
+           =================================================================== */
+        :root { --texto-tenue: #52525b; }               /* antes zinc-400 (#a1a1aa) */
+        .text-zinc-400 { color: var(--texto-tenue) !important; }
+
+        /* ===================================================================
            MODO OSCURO - Overrides globales
            Se aplican cuando <html class="dark">
            Mapea automáticamente clases de Tailwind comunes en el sistema
@@ -704,13 +716,14 @@ function busquedaGlobal() {
         <div class="h-16 flex items-center border-b border-zinc-200 px-4 flex-shrink-0">
             <a href="<?= url('dashboard.php') ?>" class="flex items-center gap-2.5 overflow-hidden">
                 <div class="w-9 h-9 flex-shrink-0 rounded-lg bg-bacal-700 flex items-center justify-center text-white font-display font-bold text-lg shadow-sm">
-                    GIC
+                    B
                 </div>
                 <div x-show="sidebarAbierto" x-transition.opacity class="overflow-hidden">
                     <div class="font-display font-extrabold text-bacal-700 text-sm leading-tight tracking-wide">SIGMA</div>
-                    <div class="font-display font-bold text-zinc-800 dark:text-zinc-100 text-[11px] leading-tight tracking-wide mt-0.5 whitespace-nowrap">
-                    GRUPO INDUSTRIAL CORRAL
-                    </div>
+                    <img src="<?= url('assets/img/logo-negro.png') ?>" alt="Carnes Bacal" onerror="this.style.display='none'"
+                         class="h-5 w-auto block dark:hidden mt-0.5">
+                    <img src="<?= url('assets/img/logo-blanco.png') ?>" alt="Carnes Bacal" onerror="this.style.display='none'"
+                         class="h-5 w-auto hidden dark:block mt-0.5">
                 </div>
             </a>
         </div>
