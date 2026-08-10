@@ -56,8 +56,8 @@ function requisicion_empresas(): array {
             'logo'   => 'assets/img/logo-corral.png',
         ],
         'bacal' => [
-            'nombre' => 'CARNES BACAL S.A. DE C.V.',
-            'corto'  => 'Carnes Bacal',
+            'nombre' => 'GRUPO INDUSTRIAL CORRAL S.A. DE C.V.',
+            'corto'  => 'Grupo Industrial Corral',
             'logo'   => 'assets/img/logo-negro.png',
         ],
     ];

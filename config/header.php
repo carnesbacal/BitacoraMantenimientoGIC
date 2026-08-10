@@ -721,7 +721,7 @@ function busquedaGlobal() {
                     <div x-show="sidebarAbierto" x-transition.opacity class="overflow-hidden">
                         <div class="font-display font-extrabold text-bacal-700 text-sm leading-tight tracking-wide">SIGMA</div>
                         <div class="font-display font-bold text-zinc-800 dark:text-zinc-100 text-[11px] leading-tight tracking-wide mt-0.5 whitespace-nowrap">
-                            GRUPO INDUSTRIAL CORRAL
+                            <?= strtoupper(EMPRESA_NOMBRE) ?>
                         </div>
                     </div>
             </a>

@@ -8,8 +8,10 @@
  * ============================================================================
  */
 
-define('APP_NAME',    'GIC · Mantenimiento');
-define('APP_VERSION', '2.0.15');
+define('APP_NAME',       'GIC · Mantenimiento');
+define('APP_VERSION',    '2.0.15');
+define('EMPRESA_NOMBRE', 'Grupo Industrial Corral');   // Nombre completo de la empresa
+define('EMPRESA_CORTO',  'GIC');                        // Nombre corto / siglas
 
 $_protocolo = (!empty($_SERVER['HTTPS']) && $_SERVER['HTTPS'] !== 'off') ? 'https' : 'http';
 $_host = $_SERVER['HTTP_HOST'] ?? 'localhost';

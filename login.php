@@ -151,10 +151,10 @@ if (es_post()) {
             <!-- Logo arriba -->
             <div class="flex items-center gap-3">
                 <div class="w-12 h-12 rounded-xl bg-white/15 backdrop-blur-sm border border-white/20 flex items-center justify-center font-display font-extrabold text-xl">
-                    GIC
+                    <?= EMPRESA_CORTO ?>
                 </div>
                 <div>
-                    <div class="font-display font-bold text-lg leading-tight tracking-wide">Grupo Industrial Corral</div>
+                    <div class="font-display font-bold text-lg leading-tight tracking-wide"><?= EMPRESA_NOMBRE ?></div>
                     <div class="text-[11px] text-gold-400 uppercase tracking-widest font-semibold mt-1">SIGMA · Sistema Interno</div>
                 </div>
             </div>
@@ -188,7 +188,7 @@ if (es_post()) {
 
             <!-- Footer marca -->
             <div class="flex items-center justify-between text-xs text-white/50">
-                <div>© <?= date('Y') ?> Grupo Industrial Corral. Uso interno.</div>
+                <div>© <?= date('Y') ?> <?= EMPRESA_NOMBRE ?>. Uso interno.</div>
                 <div class="flex items-center gap-4">
                     <span>Desarrollado por <span class="font-mono font-semibold text-white/75">&lt;LFRC/&gt;</span></span>
                     <span class="font-mono">v<?= APP_VERSION ?></span>
@@ -206,10 +206,10 @@ if (es_post()) {
             <!-- Logo móvil -->
             <div class="lg:hidden flex items-center gap-3 mb-10">
                 <div class="w-11 h-11 rounded-xl bg-bacal-700 flex items-center justify-center text-white font-display font-extrabold text-base">
-                    GIC
+                    <?= EMPRESA_CORTO ?>
                 </div>
                 <div>
-                    <div class="font-display font-bold text-lg text-zinc-900">Grupo Industrial Corral</div>
+                    <div class="font-display font-bold text-lg text-zinc-900"><?= EMPRESA_NOMBRE ?></div>
                     <div class="text-[11px] text-bacal-700 uppercase tracking-widest font-semibold">Sistema Interno</div>
                 </div>
             </div>
